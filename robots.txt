@@ -1,0 +1,52 @@
+# robots.txt — free-animations
+# https://github.com/bishrantomne/free-animations
+#
+# This file instructs well-behaved crawlers on acceptable access patterns.
+# Malicious bots and scrapers are expected to ignore it — they are subject
+# to abuse reporting and IP-level blocking on any hosting infrastructure.
+
+# Allow major search engines with a conservative crawl delay
+User-agent: Googlebot
+Crawl-delay: 10
+
+User-agent: Bingbot
+Crawl-delay: 10
+
+User-agent: DuckDuckBot
+Crawl-delay: 10
+
+# Block known aggressive scrapers and AI training crawlers
+User-agent: GPTBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: omgili
+Disallow: /
+
+User-agent: DataForSeoBot
+Disallow: /
+
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
+# Default: all other bots get a crawl delay to limit traffic spikes
+User-agent: *
+Crawl-delay: 15
+Disallow: /private/
