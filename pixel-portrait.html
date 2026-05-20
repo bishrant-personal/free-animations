@@ -24,7 +24,7 @@
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     min-height: 100vh; display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    padding: clamp(12px, 4vw, 32px); overflow-x: hidden;
+    padding: clamp(12px, 4vw, 32px); overflow: hidden;
   }
   .frame {
     padding: clamp(8px, 2vw, 16px);
@@ -32,8 +32,8 @@
   }
   .canvas-wrap {
     position: relative;
-    width: min(85vmin, 720px);
-    height: min(85vmin, 720px);
+    width: min(68vmin, 576px);
+    height: min(68vmin, 576px);
   }
   canvas {
     display: block;
@@ -132,31 +132,9 @@
     text-shadow: 1px 0 0 currentColor, 0 1px 0 currentColor;
   }
 
-  .meta {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-top: 16px; font-size: 11px; letter-spacing: 0.15em;
-    text-transform: uppercase; color: var(--fg-dim); flex-wrap: wrap;
-    gap: 12px; max-width: min(85vmin, 720px); width: 100%;
-  }
-  .controls { display: flex; gap: 6px; flex-wrap: wrap; }
-  button {
-    background: transparent; border: 1px solid var(--line); color: var(--fg-dim);
-    font-family: inherit; font-size: 10px; letter-spacing: 0.15em;
-    text-transform: uppercase; padding: 6px 12px; cursor: pointer;
-  }
-  button:hover, button:active { background: var(--line); color: var(--fg); }
   .title {
     font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
     color: var(--fg-dim); margin-bottom: 12px;
-  }
-  .hint {
-    margin-top: 4px;
-    font-size: 9px;
-    letter-spacing: 0.2em;
-    color: var(--fg-dim);
-    opacity: 0.55;
-    text-transform: uppercase;
-    text-align: center;
   }
 </style>
 </head>
@@ -253,14 +231,6 @@
         <rect x="10" y="8"  width="2" height="2" fill="#ff9aa3"/>
         <rect x="9"  y="8"  width="1" height="2" fill="#ff9aa3"/>
       </svg>
-    </div>
-  </div>
-  <div class="hint">hover over the characters</div>
-  <div class="meta">
-    <span id="info"></span>
-    <div class="controls">
-      <button id="playBtn">Pause</button>
-      <button id="dlBtn">Download</button>
     </div>
   </div>
 
@@ -612,27 +582,6 @@ function tick(now) {
 renderFrame(0); t = 1;
 requestAnimationFrame(tick);
 
-document.getElementById('info').textContent =
-  (PALETTE.length - 1) + ' colors · ' + W + '×' + H + ' · ' + (N_FRAMES/FPS).toFixed(1) + 's loop';
-
-document.getElementById('playBtn').addEventListener('click', () => {
-  playing = !playing;
-  document.getElementById('playBtn').textContent = playing ? 'Pause' : 'Play';
-  if (playing) { lastTime = 0; requestAnimationFrame(tick); }
-});
-
-document.getElementById('dlBtn').addEventListener('click', () => {
-  const SCALE = 8;
-  const off = document.createElement('canvas');
-  off.width = W * SCALE; off.height = H * SCALE;
-  const octx = off.getContext('2d');
-  octx.imageSmoothingEnabled = false;
-  octx.drawImage(canvas, 0, 0, off.width, off.height);
-  const link = document.createElement('a');
-  link.download = 'pixel-portrait.png';
-  link.href = off.toDataURL('image/png');
-  link.click();
-});
 
 // === Hover zone: only over characters ===
 const frameEl = document.getElementById('frame');
