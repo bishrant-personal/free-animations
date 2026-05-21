@@ -760,16 +760,18 @@
     const now = performance.now();
     for (const rock of rocks) {
       const s = ROCKS[rock.type];
-      const elapsed = now - rock.stateStart;
+      let elapsed = now - rock.stateStart;  // let so transitions can reset it
 
       // ── State transitions ──
       if (rock.state === 'crumbling' && elapsed > 420) {
         rock.state = 'mixing';
         rock.stateStart = now;
+        elapsed = 0;
 
       } else if (rock.state === 'mixing' && elapsed > 2100) {
         rock.state = 'forming';
         rock.stateStart = now;
+        elapsed = 0;  // ← prevents stale elapsed making p=2 on transition frame
         // Assign wide sand-surface source positions so particles visibly travel
         const spread = rock.type === 'med' ? 28 : rock.type === 'small' ? 20 : 13;
         const midX   = rock.x + s[0].length * S * 0.5;
