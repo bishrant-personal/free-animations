@@ -145,8 +145,33 @@
     const cx = (e.clientX - rect.left) * sx;
     const cy = (e.clientY - rect.top) * sy;
 
-    // Check crabs first
+    // Check clouds — tap to disperse like fog
     let handled = false;
+    if (cy < 60 * S) {
+      const dayL = 1 - nightLevel;
+      const cloudSets = [
+        { set: dayClouds,    visible: dayL > 0.15 },
+        { set: dayFogClouds, visible: dayL > 0.15 },
+        { set: nightClouds,    visible: nightLevel > 0.15 },
+        { set: nightFogClouds, visible: nightLevel > 0.15 },
+      ];
+      outer: for (const { set, visible } of cloudSets) {
+        if (!visible) continue;
+        for (const cl of set) {
+          if (cl.dispersing || cl.disperseHidden) continue;
+          const cycle = W + cl.sprite.width;
+          const xx = (((cl.offset + t * cl.speed) % cycle) + cycle) % cycle - cl.sprite.width;
+          if (cx >= xx && cx <= xx + cl.sprite.width && cy >= cl.y && cy <= cl.y + cl.sprite.height) {
+            cl.dispersing = true;
+            cl.disperseStart = performance.now();
+            handled = true;
+            break outer;
+          }
+        }
+      }
+    }
+
+    // Check crabs first
     for (const c of crabs) {
       if (c.digging) continue;
       if (cx >= c.x - 2*S && cx <= c.x + 7*S && cy >= c.y - 2*S && cy <= c.y + 5*S) {
@@ -634,7 +659,9 @@
   function buildCloudSet(specs, palette, isFog) {
     return specs.map(s => {
       const sprite = isFog ? buildFogCloud(s.w, s.h, palette) : buildCloud(s.w, s.h, palette);
-      return { ...s, sprite, mask: buildCloudMask(sprite) };
+      return { ...s, sprite, mask: buildCloudMask(sprite),
+               dispersing: false, disperseStart: 0,
+               disperseHidden: false, respawnAt: 0 };
     });
   }
   const dayClouds = buildCloudSet(cloudSpecs, dayCloudPal, false);
@@ -1130,13 +1157,48 @@
     drawDayNightOverlay(daySkyCanvas, nightSkyCanvas, 0);
     drawStars(nightLevel);
 
+    const cloudNow = performance.now();
     function drawCloudLayer(set, alpha) {
       if (alpha <= 0.02) return;
-      ctx.globalAlpha = alpha;
       for (const cl of set) {
         const cycle = W + cl.sprite.width;
         const xx = (((cl.offset + t * cl.speed) % cycle) + cycle) % cycle - cl.sprite.width;
-        ctx.drawImage(cl.sprite, Math.floor(xx), cl.y);
+        const bx = Math.floor(xx);
+
+        // Respawn after full disperse
+        if (cl.disperseHidden) {
+          if (cloudNow >= cl.respawnAt) cl.disperseHidden = false;
+          else continue;
+        }
+
+        if (!cl.dispersing) {
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(cl.sprite, bx, cl.y);
+        } else {
+          const elapsed = cloudNow - cl.disperseStart;
+          const dur = 1100;
+          const prog = Math.min(1, elapsed / dur);
+          if (prog >= 1) {
+            cl.dispersing = false;
+            cl.disperseHidden = true;
+            cl.respawnAt = cloudNow + 6000 + Math.random() * 6000;
+            continue;
+          }
+          // ease-out curve — fast start, slow fade at end
+          const ease = prog * (2 - prog);
+          const spread = ease * 14 * S;
+          // 4 wisps drifting apart like fog dissipating
+          const wisps = [
+            { dx: 0,              dy: -ease * 4,       a: Math.pow(1 - prog, 0.75) },
+            { dx:  spread * 0.55, dy: -ease * 2,       a: Math.pow(1 - prog, 1.4) * 0.65 },
+            { dx: -spread * 0.50, dy: -ease * 3,       a: Math.pow(1 - prog, 1.4) * 0.60 },
+            { dx:  spread * 0.20, dy:  ease * 3,       a: Math.pow(1 - prog, 2.0) * 0.40 },
+          ];
+          for (const w of wisps) {
+            ctx.globalAlpha = w.a * alpha;
+            ctx.drawImage(cl.sprite, bx + w.dx, cl.y + w.dy);
+          }
+        }
       }
       ctx.globalAlpha = 1;
     }
@@ -1163,6 +1225,7 @@
     const reflCol = nightLevel > 0.5 ? '#2A3050' : '#5F567A';
     setFill(reflCol);
     for (const cl of reflAll) {
+      if (cl.disperseHidden || cl.dispersing) continue;
       const cycle = W + cl.sprite.width;
       const xx = Math.floor((((cl.offset + t * cl.speed) % cycle) + cycle) % cycle - cl.sprite.width);
       for (let sx = 0; sx < cl.mask.length; sx++) {
