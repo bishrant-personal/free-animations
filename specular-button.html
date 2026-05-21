@@ -7,6 +7,7 @@
 <meta name="description" content="Pill-shaped buttons with realistic specular lighting, rim highlights, and chromatic edges that follow the cursor.">
 <meta name="category" content="Buttons">
 <meta name="tags" content="button,specular,canvas,light,glow,hover">
+<meta name="status" content="disabled">
 <title>Specular Button</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -401,7 +402,11 @@ class SpecularButton {
     this.isRunning=false;this.samples=[];
     this._onEnter=this._handleEnter.bind(this);this._onMove=this._handleMove.bind(this);this._onLeave=this._handleLeave.bind(this);
     this.el.addEventListener('mouseenter',this._onEnter);this.el.addEventListener('mousemove',this._onMove);this.el.addEventListener('mouseleave',this._onLeave);
-    this.resize();
+    // Defer resize so getBoundingClientRect() returns real layout dimensions
+    requestAnimationFrame(()=>{
+      this.resize();
+      if(window.ResizeObserver){this._ro=new ResizeObserver(()=>this.resize());this._ro.observe(this.el);}
+    });
   }
   destroy(){this.el.removeEventListener('mouseenter',this._onEnter);this.el.removeEventListener('mousemove',this._onMove);this.el.removeEventListener('mouseleave',this._onLeave);if(this.rafId){cancelAnimationFrame(this.rafId);this.rafId=null;}this.isRunning=false;}
   specularColor(a){return samplePalette(this.theme.specularHues,a);}
