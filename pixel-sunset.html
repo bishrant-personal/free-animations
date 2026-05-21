@@ -681,6 +681,7 @@
     {phaseX:470,  baseY:75*S, phase:3.3, swimSX: 0.22*S, depthRate:0.010, depthPhase:0.3,  color:'cyan',   size:'tiny'},
   ];
   let jellyHoverIdx = -1;
+  const jellyHoverT = new Array(jellies.length).fill(0); // smooth hover 0→1 per jelly
   const miniJellies = [];
 
   function drawBird(x, y, frame, big) {
@@ -950,10 +951,13 @@
 
       const yOff = Math.sin(t * 0.014 + j.phase) * 3 * S;
       const xOff = Math.sin(t * 0.011 + j.phase * 1.3) * 2 * S;
-      const isHovered = ji === jellyHoverIdx;
-      const pulse = isHovered
-        ? 0.85 + 0.15 * Math.sin(t * 0.06 + j.phase)
-        : 0.7  + 0.30 * Math.sin(t * 0.04 + j.phase);
+      // ── Smooth hover ease-in / ease-out ──
+      const hTarget = (ji === jellyHoverIdx) ? 1 : 0;
+      jellyHoverT[ji] += (hTarget - jellyHoverT[ji]) * (hTarget > jellyHoverT[ji] ? 0.10 : 0.06);
+      const hT = jellyHoverT[ji]; // 0 = idle, 1 = fully hovered
+
+      const pulse = 0.7 + 0.30 * Math.sin(t * 0.04 + j.phase)
+                  + hT * 0.15 * Math.sin(t * 0.06 + j.phase);
 
       const x = Math.floor(bx + xOff);
       const y = Math.floor(j.baseY + yOff + depthY);
@@ -966,10 +970,11 @@
       else if (j.color === 'purple') { G='#6858C8'; H='#8878E0'; Cc='#AAAAFF'; T='#6858C8'; Halo='#322870'; }
       else                           { G='#B05888'; H='#D078A8'; Cc='#F0A0CC'; T='#B05888'; Halo='#601840'; }
 
-      // ── Inner halo (size-scaled, brighter on hover) ──
-      const haloR = isHovered ? 9*S : (j.size === 'large' ? 7*S : j.size === 'tiny' ? 3*S : 5*S);
-      const glowPow = isHovered ? 0.72 : 0.55;
-      ctx.globalAlpha = effAlpha * (isHovered ? 1.1 : 0.85);
+      // ── Inner halo (smoothly expands and brightens on hover) ──
+      const haloBase = j.size === 'large' ? 7*S : j.size === 'tiny' ? 3*S : 5*S;
+      const haloR = Math.round(haloBase + hT * (9*S - haloBase));
+      const glowPow = 0.55 + hT * 0.17;
+      ctx.globalAlpha = effAlpha * (0.85 + hT * 0.25);
       setFill(Halo);
       for (let dy = -haloR; dy <= haloR; dy++) {
         for (let dx = -haloR - 1; dx <= haloR + 1; dx++) {
@@ -982,13 +987,13 @@
         }
       }
 
-      // ── Outer aura ring (hover only) ──
-      if (isHovered) {
+      // ── Outer aura ring (fades in and out with hover) ──
+      if (hT > 0.01) {
         const auraR = 16*S;
         const auraCol = j.color==='cyan' ? '#1A5040' : j.color==='teal' ? '#102848'
                       : j.color==='purple' ? '#1A0840' : '#480C24';
         setFill(auraCol);
-        ctx.globalAlpha = effAlpha * 0.50;
+        ctx.globalAlpha = effAlpha * 0.50 * hT;
         for (let dy = -auraR; dy <= auraR; dy++) {
           for (let dx = -auraR - 2; dx <= auraR + 2; dx++) {
             const dd = Math.sqrt(dx*dx + dy*dy*1.4) / auraR;
@@ -1002,7 +1007,7 @@
       }
 
       // ── Bell body & tentacles by size ──
-      ctx.globalAlpha = isHovered ? effAlpha * 1.15 : effAlpha;
+      ctx.globalAlpha = effAlpha * (1 + hT * 0.15);
 
       if (j.size === 'tiny') {
         // 3-wide dome: [H Cc H] on top, [. G .] below
