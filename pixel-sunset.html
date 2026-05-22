@@ -1208,36 +1208,36 @@
     // ── Face ──
     ctx.globalAlpha = a;
 
-    // Angry brows (thick, angled inward-down)
+    // Angry brows — max ±10px from centre (d≤0.56, well inside moon edge)
     setFill('#0C0303');
-    ctx.fillRect(cx - 7*b, cy - 4*b, 3*b, b);
-    ctx.fillRect(cx + 4*b, cy - 4*b, 3*b, b);
-    ctx.fillRect(cx - 5*b, cy - 3*b, 2*b, b);
-    ctx.fillRect(cx + 3*b, cy - 3*b, 2*b, b);
+    ctx.fillRect(cx - 5*b, cy - 4*b, 2*b, b);   // left brow top
+    ctx.fillRect(cx + 3*b, cy - 4*b, 2*b, b);   // right brow top
+    ctx.fillRect(cx - 4*b, cy - 3*b, b,   b);   // left brow inner step
+    ctx.fillRect(cx + 3*b, cy - 3*b, b,   b);   // right brow inner step
 
-    // Eyes (dark, slanted downward toward center)
+    // Eyes — slanted downward toward centre
     setFill('#180606');
-    ctx.fillRect(cx - 6*b, cy - 2*b, 2*b, b);
-    ctx.fillRect(cx - 5*b, cy - b,   2*b, b);
-    ctx.fillRect(cx + 4*b, cy - 2*b, 2*b, b);
-    ctx.fillRect(cx + 3*b, cy - b,   2*b, b);
+    ctx.fillRect(cx - 5*b, cy - 2*b, 2*b, b);   // left outer
+    ctx.fillRect(cx - 4*b, cy - b,   2*b, b);   // left inner
+    ctx.fillRect(cx + 3*b, cy - 2*b, 2*b, b);   // right outer
+    ctx.fillRect(cx + 2*b, cy - b,   2*b, b);   // right inner
 
     // Nose
     setFill('#A07840');
     ctx.fillRect(cx - b, cy + b, 2*b, b);
     ctx.fillRect(cx,     cy + 2*b, b,   b);
 
-    // Wide grin — corners curve upward
+    // Wide grin — upturn corners, compact row
     setFill('#1A0505');
-    ctx.fillRect(cx - 7*b, cy + 3*b, b, b);
-    ctx.fillRect(cx - 6*b, cy + 4*b, b, b);
-    ctx.fillRect(cx + 6*b, cy + 3*b, b, b);
-    ctx.fillRect(cx + 5*b, cy + 4*b, b, b);
-    for (let dx = -5; dx <= 5; dx++) ctx.fillRect(cx + dx*b, cy + 5*b, b, b);
+    ctx.fillRect(cx - 4*b, cy + 3*b, b, b);   // left upturn
+    ctx.fillRect(cx - 3*b, cy + 4*b, b, b);
+    ctx.fillRect(cx + 3*b, cy + 3*b, b, b);   // right upturn
+    ctx.fillRect(cx + 2*b, cy + 4*b, b, b);
+    for (let dx = -2; dx <= 2; dx++) ctx.fillRect(cx + dx*b, cy + 5*b, b, b);
 
-    // Teeth (cream, alternating gaps)
+    // Teeth (cream, alternating)
     setFill('#EEE0A0');
-    for (let dx = -4; dx <= 4; dx += 2) ctx.fillRect(cx + dx*b, cy + 4*b, b, b);
+    for (let dx = -2; dx <= 2; dx += 2) ctx.fillRect(cx + dx*b, cy + 4*b, b, b);
 
     ctx.globalAlpha = 1; _curFill = null;
   }
