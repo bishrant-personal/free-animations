@@ -640,7 +640,6 @@
   // ----- ANIMATION -----
   let t = 0;
   let last = performance.now();
-  let isRecording = false;
 
   function draw(now) {
     const dt = Math.min(48, now - last);
@@ -652,12 +651,6 @@
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-
-    // During recording, fill the dark background so the video isn't transparent
-    if (isRecording) {
-      ctx.fillStyle = '#0c0a09';
-      ctx.fillRect(0, 0, w, h);
-    }
 
     const angleRad = config.waveAngle * Math.PI / 180;
     const cs = Math.cos(angleRad);
@@ -971,79 +964,32 @@
     });
   });
 
-  // download recording — capture the canvas animation (dark background, text + config)
+  // download — snapshot the current canvas frame as a PNG
   (() => {
     const btn = document.getElementById('download-btn');
     const label = btn.querySelector('.btn-label');
-    const DURATION_MS = 6000; // 6 s — enough for a full shimmer cycle at any speed
-
-    function pickMime() {
-      const candidates = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
-      ];
-      for (const m of candidates) {
-        if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
-      }
-      return '';
-    }
 
     btn.addEventListener('click', () => {
-      if (btn.classList.contains('recording')) return;
-      if (!window.MediaRecorder || !canvas.captureStream) {
-        label.textContent = 'Not supported in this browser';
-        setTimeout(() => { label.textContent = 'Download animation'; }, 2000);
-        return;
-      }
+      // Composite: dark background + live canvas frame → offscreen canvas
+      const off = document.createElement('canvas');
+      off.width  = canvas.width;
+      off.height = canvas.height;
+      const offCtx = off.getContext('2d');
+      offCtx.fillStyle = '#0c0a09';
+      offCtx.fillRect(0, 0, off.width, off.height);
+      offCtx.drawImage(canvas, 0, 0);
 
-      const mime = pickMime();
-      let stream;
-      try {
-        stream = canvas.captureStream(60);
-      } catch (err) {
-        label.textContent = 'Capture failed';
-        setTimeout(() => { label.textContent = 'Download animation'; }, 2000);
-        return;
-      }
+      const safeName = (config.text || 'text').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'text';
+      const a = document.createElement('a');
+      a.href = off.toDataURL('image/png');
+      a.download = `pixelated-text-${safeName}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
 
-      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 10_000_000 } : undefined);
-      const chunks = [];
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-
-      const startedAt = performance.now();
-      btn.classList.add('recording');
-      isRecording = true; // tell draw() to fill dark background
-
-      function tick() {
-        if (!btn.classList.contains('recording')) return;
-        const remaining = Math.max(0, DURATION_MS - (performance.now() - startedAt));
-        label.textContent = `Recording… ${(remaining / 1000).toFixed(1)}s`;
-        if (remaining > 0) requestAnimationFrame(tick);
-      }
-
-      recorder.onstop = () => {
-        isRecording = false;
-        const ext = mime.includes('mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(chunks, { type: mime || 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        const safeName = (config.text || 'animation').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'animation';
-        a.href = url;
-        a.download = `pixelated-text-${safeName}.${ext}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-
-        btn.classList.remove('recording');
-        label.textContent = 'Download animation';
-      };
-
-      recorder.start();
-      tick();
-      setTimeout(() => recorder.state === 'recording' && recorder.stop(), DURATION_MS);
+      // Brief feedback
+      label.textContent = 'Saved!';
+      setTimeout(() => { label.textContent = 'Download'; }, 1200);
     });
   })();
 
