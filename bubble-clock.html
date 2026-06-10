@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="title" content="Bubble Clock">
+<meta name="description" content="A real-time analog clock suspended inside a liquid glass soap bubble, rendered in Three.js. The bubble drifts and bounces around the viewport with jelly physics, colliding with a crowd of smaller glass bubbles. Features physically modeled thin-film iridescence, dynamic reflection and refraction, frosted blur, and tap-to-pop bursts: the film unzips from the touch point, sheds a droplet mist, and the clay clock pieces fall one by one as the death front sweeps past them. Bubbles return after a few seconds with a soft synthesized pop sound.">
+<meta name="category" content="Scenes">
+<meta name="tags" content="bubble,clock,three.js,webgl,glass,iridescence,refraction,physics,collision,interactive,pop,time,shader">
+<title>Bubble Clock</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;
+    background:radial-gradient(120% 95% at 50% 46%,
+      #2e2330 0%, #151823 42%, #0a0c14 72%, #06070b 100%)}
+  canvas{display:block}
+  .vignette{
+    position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:radial-gradient(115% 100% at 50% 46%,
+      transparent 0%, transparent 52%,
+      rgba(4,5,9,0.28) 76%, rgba(2,3,6,0.62) 100%);
+  }
+</style>
+</head>
+<body>
+<div class="vignette"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;   // filmic response: soft highlights, rich shadows
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 0.1, 100);
+const CAMZ = 7.4;
+camera.position.set(0, 0, CAMZ);
+
+/* ---------- pastel sky: beige -> white -> soft orange ---------- */
+const bgMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite:false,
+  uniforms:{ uTime:{value:0} },
+  vertexShader:`
+    varying vec3 vDir;
+    void main(){ vDir = normalize(position);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader:`
+    varying vec3 vDir; uniform float uTime;
+    void main(){
+      // radial depth: a warm glowing core where the eye rests,
+      // falling away to near-black at the edges of vision
+      float d = length(vDir - vec3(0.0, -0.05, -1.0)) * 0.72;
+      vec3 core  = vec3(0.180,0.137,0.184);  // mauve-plum glow
+      vec3 midC  = vec3(0.082,0.094,0.137);  // night navy
+      vec3 edge  = vec3(0.024,0.027,0.045);  // near-black ink
+      vec3 col = mix(core, midC, smoothstep(0.05, 0.55, d));
+      col = mix(col, edge, smoothstep(0.50, 1.15, d));
+      // ember warmth pooling low in the frame, for grounded depth
+      float low = smoothstep(0.1, -0.6, vDir.y);
+      col += vec3(0.055, 0.028, 0.020) * low * (1.0 - smoothstep(0.4, 1.0, d));
+      // breathing halo that drifts around the core
+      float glow = exp(-pow(length(vDir.xy - vec2(sin(uTime*0.05)*0.25, 0.1 + cos(uTime*0.04)*0.1)), 2.0)*2.6);
+      col += vec3(0.075, 0.055, 0.060) * glow;
+      gl_FragColor = vec4(col,1.0);
+    }`
+});
+const bgMesh = new THREE.Mesh(new THREE.SphereGeometry(40,32,32), bgMat);
+scene.add(bgMesh);
+
+/* ---------- lighting ---------- */
+/* ---------- lighting: soft studio setup for the dark stage ---------- */
+scene.fog = new THREE.FogExp2(0x0a0c14, 0.05);   // depth haze: far shapes sink into the dark
+scene.add(new THREE.HemisphereLight(0xaeb6d6, 0x3a2520, 0.55)); // cool sky, ember floor
+const key  = new THREE.DirectionalLight(0xfff0dd, 1.0);  key.position.set(3, 5, 4);   scene.add(key);
+const fill = new THREE.DirectionalLight(0x8fa0d0, 0.28); fill.position.set(-4, 2, 1); scene.add(fill);
+const rimL = new THREE.DirectionalLight(0xffc9a8, 0.65); rimL.position.set(-2, 3, -6); scene.add(rimL); // backlight halo on the bubbles
+// pockets of coloured light deep in the scene — lit zones the bubbles drift through
+const deepWarm = new THREE.PointLight(0xd96f4e, 0.5, 18, 2); deepWarm.position.set(-6, -3.5, -9);  scene.add(deepWarm);
+const deepCool = new THREE.PointLight(0x5a74c9, 0.45, 18, 2); deepCool.position.set( 6,  4.0, -11); scene.add(deepCool);
+
+/* ---------- dynamic env maps (ping-pong pair) ----------
+   two cube targets alternate read/write each frame, so the glass
+   mini-bubbles can themselves appear inside the env map without
+   creating a read-while-write feedback loop */
+function makeCubeRT(){
+  return new THREE.WebGLCubeRenderTarget(256, {
+    format: THREE.RGBFormat, generateMipmaps: true,
+    minFilter: THREE.LinearMipmapLinearFilter
+  });
+}
+const cubeRTA = makeCubeRT(), cubeRTB = makeCubeRT();
+let cubeRead = cubeRTB, cubeWrite = cubeRTA;
+const cubeRT = cubeRTA; // initial binding for materials created below
+const cubeCam = new THREE.CubeCamera(0.1, 100, cubeRTA);
+scene.add(cubeCam);
+
+/* ---------- the object's shadow passes straight THROUGH the film ----------
+   nothing ever darkens the bubble wall; a soft blob lands on the
+   implied floor beneath instead, softening as the bubble rises */
+function shadowTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(128,128,10, 128,128,126);
+  g.addColorStop(0.0, 'rgba(0,0,0,0.55)');
+  g.addColorStop(0.55,'rgba(0,0,0,0.22)');
+  g.addColorStop(1.0, 'rgba(0,0,0,0.0)');
+  x.fillStyle = g; x.fillRect(0,0,256,256);
+  return new THREE.CanvasTexture(c);
+}
+const groundShadow = new THREE.Mesh(
+  new THREE.PlaneGeometry(4.4, 1.35),
+  new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent:true,
+    depthWrite:false, opacity:0.0 })
+);
+scene.add(groundShadow);
+
+/* ---------- ghost source: the dial alone, rendered to a small texture,
+   so the glass can show a faint funhouse copy on its far inner wall */
+const dialRT = new THREE.WebGLRenderTarget(256, 256, { format: THREE.RGBAFormat });
+const dialCam = new THREE.OrthographicCamera(-1.7, 1.7, 1.7, -1.7, 0.1, 20);
+
+/* ---------- approximate global illumination ----------
+   two colored bounce lights ride along with mini bubbles so moving
+   colour bleeds across the clock and the scene */
+const bounceA = new THREE.PointLight(0xf0a98c, 0.55, 14, 2); // peach bounce
+const bounceB = new THREE.PointLight(0xa9bdd6, 0.45, 14, 2); // periwinkle bounce
+scene.add(bounceA, bounceB);
+
+/* ============================================================
+   BUBBLE GROUP — glass shell + the clock suspended inside
+   ============================================================ */
+const bubbleGroup = new THREE.Group();
+scene.add(bubbleGroup);
+const RADIUS = 1.55;
+
+const glassUniforms = {
+  uTime:{value:0},
+  uEnv:{value:cubeRT.texture},
+  uCamPos:{value:camera.position},
+  uVel:{value:new THREE.Vector2(0,0)},
+  uDial:{value:dialRT.texture},
+  uCenter:{value:new THREE.Vector3()},
+  uCamR:{value:new THREE.Vector3(1,0,0)},
+  uCamU:{value:new THREE.Vector3(0,1,0)},
+  uPopDir:{value:new THREE.Vector3(0,0,1)},
+  uPopFront:{value:-1.0},
+  uWobble:{value: REDUCED ? 0.015 : 0.05}
+};
+const glassVert = `
+  uniform float uTime; uniform float uWobble;
+  varying vec3 vWorldPos; varying vec3 vNormalW; varying float vLocalY;
+  void main(){
+    vLocalY = position.y / 1.55;   // -1 at the base, +1 at the crown
+    vec3 p = position;
+    float w = sin(p.y*3.0 + uTime*1.35)*0.5
+            + sin(p.x*4.2 - uTime*1.05)*0.3
+            + sin(p.z*5.1 + uTime*1.7)*0.2;
+    p += normal * w * uWobble;
+    vec3 n = normalize(normal + uWobble*2.2*vec3(
+      cos(p.x*4.2 - uTime*1.05),
+      cos(p.y*3.0 + uTime*1.35),
+      cos(p.z*5.1 + uTime*1.7)));
+    vec4 wp = modelMatrix * vec4(p,1.0);
+    vWorldPos = wp.xyz;
+    vNormalW = normalize(mat3(modelMatrix) * n);
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }`;
+const glassFrag = `
+  uniform samplerCube uEnv; uniform vec3 uCamPos; uniform float uTime;
+  uniform vec2 uVel;
+  uniform sampler2D uDial; uniform vec3 uCenter, uCamR, uCamU;
+  uniform vec3 uPopDir; uniform float uPopFront;
+  varying vec3 vWorldPos; varying vec3 vNormalW; varying float vLocalY;
+
+  // per-fragment randomized kernel: each pixel rotates its taps differently,
+  // so ghost copies and banding dissolve into smooth frost
+  float hash21(vec2 p){
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+  }
+  vec3 blurredCube(samplerCube env, vec3 dir, float bias, float spread){
+    vec3 t = normalize(abs(dir.y) < 0.95 ? cross(dir, vec3(0.0,1.0,0.0))
+                                         : cross(dir, vec3(1.0,0.0,0.0)));
+    vec3 b = cross(dir, t);
+    float ang = 6.28318 * hash21(gl_FragCoord.xy);
+    vec3 c = textureCube(env, dir, bias).rgb * 2.0;
+    for(int i = 0; i < 12; i++){
+      float a = ang + 0.5236 * float(i);
+      float r = spread * (0.30 + 0.70 * float(i) / 11.0);
+      vec3 o = t * cos(a) * r + b * sin(a) * r;
+      c += textureCube(env, normalize(dir + o), bias).rgb;
+    }
+    return c / 14.0;
+  }
+
+  void main(){
+    /* ---- the unzip: a circular death front expanding from the tap point.
+       everything within geodesic angle uPopFront of the puncture is GONE —
+       a growing hole, not a fade. the edge itself is the thickened rim. */
+    float popRing = 0.0, popGlow = 0.0;
+    if(uPopFront > 0.0){
+      vec3 pd = normalize(vWorldPos - uCenter);
+      float aGeo = acos(clamp(dot(pd, uPopDir), -1.0, 1.0));
+      if(aGeo < uPopFront) discard;
+      float dGeo = aGeo - uPopFront;
+      // dim gracefully as the front nears the far pole — no hard wink
+      float endFade = smoothstep(3.1416, 2.55, uPopFront);
+      popRing = (1.0 - smoothstep(0.0, 0.10, dGeo)) * endFade;        // thickened rim
+      float g = 1.0 - smoothstep(0.0, 0.42, dGeo);
+      popGlow = g*g * endFade;                                        // soft herald glow
+    }
+    vec3 N = normalize(vNormalW);
+    vec3 V = normalize(uCamPos - vWorldPos);
+    vec3 I = -V;
+    float ndv = max(dot(N,V), 0.0);
+    float fres = pow(1.0 - ndv, 3.0);
+    float rim  = pow(1.0 - ndv, 2.0);
+
+    /* ---- thin-film interference (the real physics) ----
+       gravity drains the film: thin at the crown, pooling at the base.
+       optical path difference 2·n·d·cosθt sets per-wavelength phase;
+       the π shift on the outer reflection means d→0 goes BLACK. */
+    float yN = clamp(vLocalY, -1.0, 1.0);
+    float grav  = (1.0 - yN) * 0.5;                       // 0 crown → 1 base
+    float swirl = sin(vWorldPos.x*2.0 + uTime*0.40)
+                * sin(vWorldPos.y*1.7 - uTime*0.30)
+                + 0.5*sin(vWorldPos.z*3.1 + uTime*0.55);  // convection currents
+    float dNm = 95.0 + grav*600.0 + swirl*70.0;           // film thickness, nm
+    // a breathing ultra-thin patch at the very top — the pre-pop black spot
+    float crown = smoothstep(0.55, 0.95, yN) * (0.55 + 0.45*sin(uTime*0.21));
+    dNm = max(mix(dNm, 16.0, crown), 10.0);
+    // refracted angle inside the film (n = 1.33)
+    float cosT = sqrt(max(0.0, 1.0 - (1.0 - ndv*ndv)/(1.33*1.33)));
+    vec3 lambda = vec3(650.0, 550.0, 450.0);              // R G B wavelengths
+    vec3 phase  = 16.72 * dNm * cosT / lambda;            // 4π·1.33·d·cosθ / λ
+    vec3 filmI  = 0.5 - 0.5*cos(phase);                   // π-shifted interference
+    float filmAlive = smoothstep(12.0, 48.0, dNm);        // black film reflects nothing
+
+    // gentle ripple, rim-only and low-frequency — the centre stays calm
+    // so no moiré rings form over the dial
+    vec3 ripple = vec3(
+      sin(vWorldPos.y*2.4 + uTime*0.8),
+      sin(vWorldPos.z*2.1 - uTime*1.0),
+      sin(vWorldPos.x*2.7 + uTime*0.6)) * (rim*rim*0.05);
+    vec3 Nr = normalize(N + ripple);
+
+    // each tap is itself pre-blurred (higher mip), so surface detail of the
+    // shapes melts into soft colour instead of ghosting through as texture
+    float bias   = 2.4 + rim*1.6;
+    float spread = 0.026 + rim*0.032;
+
+    // reflection with subtle per-channel offset (chromatic aberration)
+    vec3 ca = vec3(0.012 + rim*0.03);
+    vec3 refl;
+    refl.r = blurredCube(uEnv, reflect(I, normalize(N + ca.x)), rim*1.6, 0.003 + rim*0.012).r;
+    refl.g = blurredCube(uEnv, reflect(I, N),                   rim*1.6, 0.003 + rim*0.012).g;
+    refl.b = blurredCube(uEnv, reflect(I, normalize(N - ca.z)), rim*1.6, 0.003 + rim*0.012).b;
+
+    // front face = convex mirror: upright wide-angle reflection,
+    // its colour carved by the interference and silenced by black film
+    refl *= (0.18 + filmI * 1.45) * mix(0.10, 1.0, filmAlive);
+
+    // back face = concave mirror: light crossing the bubble reflects off
+    // the far inner wall — a smaller, INVERTED image floating in the middle
+    vec3 R = reflect(I, N);
+    vec3 Rback = normalize(vec3(-R.x, -R.y, R.z));
+    vec3 reflBack = blurredCube(uEnv, Rback, bias*0.8, spread*0.7);
+    float centre = (1.0 - rim);
+    refl += reflBack * centre*centre * 0.22 * filmAlive;
+    float base = 1.030 + rim*0.135;
+    float disp = 0.012 + rim*0.055;
+    vec3 refr;
+    refr.r = blurredCube(uEnv, refract(I,Nr,1.0/(base - disp)), bias, spread).r;
+    refr.g = blurredCube(uEnv, refract(I,Nr,1.0/(base)),        bias, spread).g;
+    refr.b = blurredCube(uEnv, refract(I,Nr,1.0/(base + disp)), bias, spread).b;
+
+    vec3 col = mix(refr, refl, clamp(fres*0.9 + 0.03, 0.0, 1.0));
+
+    // interference glow rides the reflective (grazing) angles
+    col += filmI * (fres*0.30 + rim*0.06) * filmAlive;
+
+    /* faint inner-wall ghost of the dial: mirrored across the bubble's
+       centre (opposite the line of sight), squeezed along the curve
+       like a funhouse mirror, dim enough to be easy to miss, and
+       fading to nothing toward the centre of the film */
+    vec3 rel = vWorldPos - uCenter;
+    vec2 q = vec2(dot(rel, uCamR), dot(rel, uCamU)) / 1.55;   // -1..1 across the face
+    vec2 gq = -q * (0.62 / (1.0 + dot(q,q)*0.85));            // mirror + curved squeeze
+    vec4 ghost = texture2D(uDial, vec2(0.5) + gq * 0.4559);   // 1.55/3.4
+    float gW = pow(rim, 1.6) * 0.075;                          // ≤ ~7%, edge-weighted
+    col += ghost.rgb * ghost.a * gW * (0.65 + 0.55*filmI) * filmAlive;
+
+    // highlights — layered falloff: tight core wrapped in wide soft halos,
+    // so every shine melts into the surface instead of sitting on it
+    vec3 L1 = normalize(vec3(0.65, 1.0, 0.55));
+    vec3 L2 = normalize(vec3(-0.7, 0.35, -0.25));
+    float hi = mix(0.12, 1.0, filmAlive);
+    float d1 = max(dot(reflect(-L1,N), V), 0.0);
+    float d2 = max(dot(reflect(-L2,N), V), 0.0);
+    float s1 = pow(d1, 240.0)*0.75 + pow(d1, 60.0)*0.28 + pow(d1, 13.0)*0.060;
+    float s2 = pow(d2, 110.0)*0.45 + pow(d2, 28.0)*0.14;
+    // secondary ghost: light that bounced inside the film exits opposite
+    float dg  = max(dot(reflect(-L1,N), -V), 0.0);
+    float s1g = pow(dg, 90.0)*0.6 + pow(dg, 20.0)*0.12;
+    col += vec3(1.0, 0.99, 0.96) * s1 * 1.35 * hi;
+    col += vec3(1.0, 0.88, 0.78) * s2 * 0.45 * hi;
+    col += vec3(1.0, 0.94, 0.85) * s1g * 0.30 * hi * filmI.g;
+
+    // rim edge lights: a warm key-side edge and a cool counter-edge,
+    // hugging the silhouette to carve the sphere out of the dark
+    float edge = pow(1.0 - ndv, 4.5);
+    float wWarm = pow(max(dot(N, normalize(vec3( 0.7, 0.55, 0.25))), 0.0), 2.0);
+    float wCool = pow(max(dot(N, normalize(vec3(-0.65,-0.15, 0.30))), 0.0), 2.0);
+    col += (vec3(1.00,0.70,0.48)*wWarm + vec3(0.50,0.64,1.00)*wCool)
+           * edge * 0.9 * (0.25 + 0.75*filmAlive);
+
+    // dynamic white rim: brightest along the edge the bubble is moving
+    // toward, so the light always agrees with the motion on screen
+    vec3 mdir = vec3(uVel, 0.0);
+    float mlen = length(mdir);
+    if(mlen > 0.001){
+      float lead = max(dot(N, mdir/mlen), 0.0);
+      col += vec3(1.0) * pow(1.0 - ndv, 5.0) * pow(lead, 3.0)
+             * min(mlen*1.4, 1.0) * 0.85 * (0.3 + 0.7*filmAlive);
+    }
+    // a hazy gleam slowly orbiting the rim — a passing light source
+    vec3 gDir = normalize(vec3(cos(uTime*0.45), 0.5 + 0.3*sin(uTime*0.31), sin(uTime*0.45)));
+    float gd = max(dot(N, gDir), 0.0);
+    float glint = pow(gd, 30.0)*0.28 + pow(gd, 9.0)*0.10;
+    col += vec3(1.0) * glint * rim * filmAlive;
+
+    // fully opaque: the sharp scene can never bleed through.
+    // the blurred live refraction plays the role of transparency
+    float alpha = 0.985 + rim*0.015;
+    // the retreating rim: the glow heralds it by amplifying the film's OWN
+    // interference colours, then the thickened core blooms through —
+    // one continuous gradient instead of a painted ring
+    col = mix(col, col*1.35 + filmI*0.55, popGlow*0.8);
+    col += popRing * (vec3(0.45, 0.52, 0.66)*0.55 + filmI*1.5);
+    alpha = max(alpha, popRing*0.95 + popGlow*0.2);
+    gl_FragColor = vec4(col, alpha);
+  }`;
+
+const bubbleGeo = new THREE.SphereGeometry(RADIUS, 128, 128);
+const bubbleBack = new THREE.Mesh(bubbleGeo, new THREE.ShaderMaterial({
+  uniforms:glassUniforms, vertexShader:glassVert, fragmentShader:glassFrag,
+  transparent:true, depthWrite:false, side:THREE.BackSide }));
+const bubbleFront = new THREE.Mesh(bubbleGeo, new THREE.ShaderMaterial({
+  uniforms:glassUniforms, vertexShader:glassVert, fragmentShader:glassFrag,
+  transparent:true, depthWrite:false, side:THREE.FrontSide }));
+bubbleBack.renderOrder = 1; bubbleFront.renderOrder = 3;
+bubbleGroup.add(bubbleBack, bubbleFront);
+
+/* ============================================================
+   MINI BUBBLES — 7 empty siblings drifting on a plane behind
+   the clock, colliding gently with one another
+   ============================================================ */
+const blankTex = new THREE.DataTexture(new Uint8Array([0,0,0,0]), 1, 1, THREE.RGBAFormat);
+blankTex.needsUpdate = true;
+const miniGeo = new THREE.SphereGeometry(RADIUS, 48, 48);
+const minis = [];
+function makeMini(s){
+  const u = {
+    uTime:{value:0}, uEnv:{value:cubeRead.texture}, uCamPos:{value:camera.position},
+    uVel:{value:new THREE.Vector2()}, uDial:{value:blankTex},
+    uCenter:{value:new THREE.Vector3()},
+    uCamR:{value:new THREE.Vector3(1,0,0)}, uCamU:{value:new THREE.Vector3(0,1,0)},
+    uPopDir:{value:new THREE.Vector3(0,0,1)},
+    uPopFront:{value:-1.0},
+    uWobble:{value: REDUCED ? 0.015 : 0.05}
+  };
+  const m = new THREE.Mesh(miniGeo, new THREE.ShaderMaterial({
+    uniforms:u, vertexShader:glassVert, fragmentShader:glassFrag,
+    transparent:true, depthWrite:false, side:THREE.FrontSide }));
+  m.scale.setScalar(s);
+  m.renderOrder = 0;   // siblings draw under the clock shell
+  const ang = Math.random()*Math.PI*2;
+  const cruise = 0.09 + Math.random()*0.09;          // slow drifters
+  m.userData = {
+    s, r: RADIUS*s, mass: s*s,
+    vel: new THREE.Vector2(Math.cos(ang), Math.sin(ang)).multiplyScalar(cruise),
+    cruise, pulse: 0, u,
+    // pop lifecycle
+    popping:false, dead:false, entering:false, popT:0, respawnAt:0,
+    popDirV:new THREE.Vector3(), popT1:new THREE.Vector3(), popT2:new THREE.Vector3()
+  };
+  minis.push(m); scene.add(m);
+  return m;
+}
+// all ten siblings live on the CLOCK's plane — every one collides with it
+[0.40, 0.35, 0.31, 0.28, 0.26, 0.24, 0.22, 0.20, 0.17, 0.15]
+  .forEach(s=>makeMini(s));
+// scatter without initial overlaps (test only against already-placed)
+minis.forEach((m, i)=>{
+  const u = m.userData;
+  let tries = 0, ok = false;
+  while(!ok && tries++ < 300){
+    m.position.set((Math.random()-0.5)*7.5, (Math.random()-0.5)*4.2, 0);
+    ok = minis.slice(0, i).every(o =>
+      m.position.distanceTo(o.position) > (u.r + o.userData.r)*1.05);
+    // everyone must spawn clear of the clock (which starts at origin)
+    if(ok) ok = Math.hypot(m.position.x, m.position.y) > RADIUS + u.r + 0.2;
+  }
+});
+
+/* ============================================================
+   BURST MACHINERY — droplet mist + tap-to-pop lifecycle
+   ============================================================ */
+// droplet pool: the unstable rim sheds micro-droplets as it sweeps
+const MAXP = 700;
+const pPos  = new Float32Array(MAXP*3);
+const pAlpha= new Float32Array(MAXP);
+const pSize = new Float32Array(MAXP);
+const pVel  = new Float32Array(MAXP*3);
+const pLife = new Float32Array(MAXP);
+const pAge  = new Float32Array(MAXP);
+let pNext = 0, pSizeDirty = false;
+pAge.fill(1); pLife.fill(0.0001);
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+pGeo.setAttribute('aAlpha',  new THREE.BufferAttribute(pAlpha, 1));
+pGeo.setAttribute('aSize',   new THREE.BufferAttribute(pSize, 1));
+const dropletMat = new THREE.ShaderMaterial({
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+  vertexShader:`
+    attribute float aAlpha; attribute float aSize;
+    varying float vA;
+    void main(){
+      vA = aAlpha;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize * (280.0 / -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader:`
+    varying float vA;
+    void main(){
+      float d = length(gl_PointCoord - 0.5);
+      float a = smoothstep(0.5, 0.12, d) * vA;
+      gl_FragColor = vec4(vec3(0.92, 0.95, 1.0), a*0.85);
+    }`
+});
+const droplets = new THREE.Points(pGeo, dropletMat);
+droplets.frustumCulled = false; droplets.renderOrder = 5;
+scene.add(droplets);
+
+function spawnDroplet(x,y,z, vx,vy,vz, life, size){
+  const i = pNext; pNext = (pNext+1) % MAXP;
+  pPos[i*3]=x; pPos[i*3+1]=y; pPos[i*3+2]=z;
+  pVel[i*3]=vx; pVel[i*3+1]=vy; pVel[i*3+2]=vz;
+  pLife[i]=life; pAge[i]=0; pSize[i]=size; pSizeDirty = true;
+}
+// shed mist along the current front ring of a popping bubble
+const _rd = new THREE.Vector3(), _tf = new THREE.Vector3();
+function shedRing(center, dir, t1, t2, front, Rw, count){
+  const sF = Math.sin(front), cF = Math.cos(front);
+  for(let k=0; k<count; k++){
+    const phi = Math.random()*Math.PI*2;
+    const c = Math.cos(phi), s = Math.sin(phi);
+    _rd.copy(dir).multiplyScalar(cF)
+       .addScaledVector(t1, c*sF).addScaledVector(t2, s*sF);
+    _tf.copy(dir).multiplyScalar(-sF)
+       .addScaledVector(t1, c*cF).addScaledVector(t2, s*cF);
+    const r1 = Math.random(), r2 = Math.random();
+    spawnDroplet(
+      center.x + _rd.x*Rw, center.y + _rd.y*Rw, center.z + _rd.z*Rw,
+      _rd.x*(0.35+0.55*r1) - _tf.x*(0.55+0.65*r2) + (Math.random()-0.5)*0.5,
+      _rd.y*(0.35+0.55*r1) - _tf.y*(0.55+0.65*r2) + (Math.random()-0.5)*0.5,
+      _rd.z*(0.35+0.55*r1) - _tf.z*(0.55+0.65*r2) + (Math.random()-0.5)*0.5,
+      0.50 + Math.random()*0.55,
+      0.014 + Math.random()*0.022);
+  }
+}
+function makeBasis(dir, t1, t2){
+  t1.set(0,1,0);
+  if(Math.abs(dir.y) > 0.92) t1.set(1,0,0);
+  t1.cross(dir).normalize();
+  t2.crossVectors(dir, t1).normalize();
+}
+
+// the clock bubble's own pop state
+const POP_DUR = 0.5;                       // 0.3–0.6s reads right; front is LINEAR
+const _wp = new THREE.Vector3(), _cd = new THREE.Vector3();
+
+/* ---------- pop SFX: an actual bubble burst, not a beep ----------
+   no oscillators at all — just noise shaped two ways:
+   1) through a high-Q low bandpass it RINGS briefly, the hollow watery
+      "bup" of the air releasing (pitch follows bubble size)
+   2) a 30ms whisper through a lowpass — the film snapping
+   both very quiet, with organic variation since the source is noise */
+let actx = null, noiseBuf = null;
+function playPop(size){
+  try{
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if(actx.state === 'suspended') actx.resume();
+    if(!noiseBuf){
+      noiseBuf = actx.createBuffer(1, actx.sampleRate*0.25, actx.sampleRate);
+      const ch = noiseBuf.getChannelData(0);
+      for(let i = 0; i < ch.length; i++) ch[i] = Math.random()*2 - 1;
+    }
+    const t0 = actx.currentTime;
+    const detune = 0.92 + Math.random()*0.16;
+    const f0 = (110 + 85/(0.16 + size)) * detune;  // clock ~185Hz, smallest ~420Hz
+    const ring = 0.10 + size*0.10;                  // bigger bubble, longer hollow
+
+    // body: noise ringing through a resonant bandpass that SWEEPS UPWARD —
+    // the cheerful "bloop" of a water drop, still organic since it's noise
+    const body = actx.createBufferSource(); body.buffer = noiseBuf;
+    const bp = actx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 13;
+    bp.frequency.setValueAtTime(f0, t0);
+    bp.frequency.exponentialRampToValueAtTime(f0*2.3, t0 + ring*0.85);
+    const bg = actx.createGain();
+    bg.gain.setValueAtTime(0.0001, t0);
+    bg.gain.exponentialRampToValueAtTime(0.55, t0 + 0.005);
+    bg.gain.exponentialRampToValueAtTime(0.0001, t0 + ring);
+    body.connect(bp).connect(bg).connect(actx.destination);
+    body.start(t0, Math.random()*0.08); body.stop(t0 + ring + 0.05);
+
+    // film snap: a soft breath, dark and short
+    const snap = actx.createBufferSource(); snap.buffer = noiseBuf;
+    const lp = actx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 2600; lp.Q.value = 0.5;
+    const sg = actx.createGain();
+    sg.gain.setValueAtTime(0.0001, t0);
+    sg.gain.exponentialRampToValueAtTime(0.14, t0 + 0.002);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.035);
+    snap.connect(lp).connect(sg).connect(actx.destination);
+    snap.start(t0, Math.random()*0.1); snap.stop(t0 + 0.06);
+  }catch(e){ /* no audio available — stay silent */ }
+}
+
+const clockPop = {
+  state:'alive',                           // alive | popping | falling
+  dir:new THREE.Vector3(), t1:new THREE.Vector3(), t2:new THREE.Vector3(),
+  popT:0, fallT:0, respawnAt:0, entering:false
+};
+
+// tap → puncture at the exact contact point
+const raycaster = new THREE.Raycaster();
+const tapNDC = new THREE.Vector2();
+addEventListener('pointerdown', e=>{
+  tapNDC.set((e.clientX/innerWidth)*2 - 1, -(e.clientY/innerHeight)*2 + 1);
+  raycaster.setFromCamera(tapNDC, camera);
+  const targets = minis.filter(m=>!m.userData.popping && !m.userData.dead && !m.userData.entering);
+  if(clockPop.state === 'alive') targets.push(bubbleFront);
+  const hits = raycaster.intersectObjects(targets, false);
+  if(!hits.length) return;
+  const hit = hits[0];
+  const nowT = performance.now()*0.001;
+  if(hit.object === bubbleFront){
+    playPop(1.0);                       // the big one plops, low and round
+    clockPop.state = 'popping'; clockPop.popT = nowT;
+    clockPop.dir.copy(hit.point).sub(bubbleGroup.position).normalize();
+    makeBasis(clockPop.dir, clockPop.t1, clockPop.t2);
+    glassUniforms.uPopDir.value.copy(clockPop.dir);
+    glassUniforms.uPopFront.value = 0.0001;
+    // each piece releases when the front sweeps past ITS position
+    for(const o of dialPieces){
+      o.getWorldPosition(_wp).sub(bubbleGroup.position);
+      const L = _wp.length();
+      const ang = L > 0.05
+        ? Math.acos(THREE.MathUtils.clamp(_wp.normalize().dot(clockPop.dir), -1, 1))
+        : Math.PI*0.5;   // the hub sits at the centre — release mid-sweep
+      o.userData.fall = {
+        released:false, ang,
+        vel:new THREE.Vector3(),
+        avel:new THREE.Vector3((Math.random()-0.5)*2.6, (Math.random()-0.5)*2.6, (Math.random()-0.5)*2.6)
+      };
+    }
+  } else {
+    const u = hit.object.userData;
+    playPop(u.s);                       // little ones plip, higher and quicker
+    u.popping = true; u.popT = nowT;
+    u.popDirV.copy(hit.point).sub(hit.object.position).normalize();
+    makeBasis(u.popDirV, u.popT1, u.popT2);
+    u.u.uPopDir.value.copy(u.popDirV);
+    u.u.uPopFront.value = 0.0001;
+  }
+});
+
+// re-entry: drift in smoothly from a random off-screen direction
+function respawnMini(m){
+  const u = m.userData;
+  const a = Math.random()*Math.PI*2;
+  const dirX = Math.cos(a), dirY = Math.sin(a);
+  const D = Math.hypot(halfW, halfH) + u.r + 0.6;
+  m.position.set(dirX*D, dirY*D, 0);
+  u.vel.set(-dirX, -dirY).multiplyScalar(0.38);   // brisk entry, settles to cruise inside
+  u.dead = false; u.entering = true; u.pulse = 0;
+  u.u.uPopFront.value = -1.0;
+  m.visible = true;
+}
+function respawnClock(t){
+  const a = Math.random()*Math.PI*2;
+  const dirX = Math.cos(a), dirY = Math.sin(a);
+  const D = Math.hypot(halfW, halfH) + RADIUS + 0.8;
+  bubbleGroup.position.set(dirX*D, dirY*D, 0);
+  vel.set(-dirX, -dirY).multiplyScalar(REDUCED ? 0.14 : 0.42);
+  clock3D.position.set(0,0,0);
+  clock3D.rotation.set(0,0,0);
+  for(const o of dialPieces){
+    o.position.copy(o.userData.home.p);
+    o.rotation.copy(o.userData.home.r);
+    o.userData.fall = null;
+  }
+  sway.set(0,0); swayVel.set(0,0); pvx = vel.x; pvy = vel.y;
+  sqX = sqY = sqVX = sqVY = 0;
+  glassUniforms.uPopFront.value = -1.0;
+  bubbleBack.visible = bubbleFront.visible = true;
+  clockPop.state = 'alive'; clockPop.entering = true;
+}
+
+/* ---------- the clock inside: reference-style hands & hour bars ---------- */
+const clock3D = new THREE.Group();
+clock3D.renderOrder = 2;
+bubbleGroup.add(clock3D);
+
+
+// 12 chunky pastel hour bars, candy-coloured like the reference
+const barColors = [0xfdfdf8, 0xf0b9a1, 0xf3b6b6, 0x9db4d4, 0xf0d9a8, 0xfdfdf8,
+                   0x9db4d4, 0xf3a9a9, 0xfdfdf8, 0xe89a78, 0xf0d9a8, 0x9db4d4];
+// rounded pill geometry: rounded-rect cross-section + deep bevel = soft clay edges
+function roundedBarGeo(w, h, d, r){
+  const s = new THREE.Shape();
+  const x = -w/2, y = -h/2;
+  s.moveTo(x+r, y);
+  s.lineTo(x+w-r, y);  s.quadraticCurveTo(x+w, y,   x+w, y+r);
+  s.lineTo(x+w, y+h-r); s.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  s.lineTo(x+r, y+h);  s.quadraticCurveTo(x,   y+h, x,   y+h-r);
+  s.lineTo(x, y+r);    s.quadraticCurveTo(x,   y,   x+r, y);
+  const g = new THREE.ExtrudeGeometry(s, {
+    depth: d*0.5, curveSegments: 8,
+    bevelEnabled: true, bevelThickness: d*0.25,
+    bevelSize: r*0.9, bevelSegments: 5
+  });
+  g.translate(0, 0, -d*0.25); // centre on z
+  return g;
+}
+
+// hand-pressed clay grain: soft random dents and pores, tiled as a bump map
+function clayBumpTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#808080'; x.fillRect(0,0,128,128);
+  for(let i=0;i<420;i++){
+    const r = 1.5 + Math.random()*5;
+    const g = x.createRadialGradient(0,0,0, 0,0,r);
+    const lite = Math.random() < 0.5;
+    g.addColorStop(0, lite ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)');
+    g.addColorStop(1, 'rgba(128,128,128,0)');
+    x.save();
+    x.translate(Math.random()*128, Math.random()*128);
+    x.fillStyle = g;
+    x.beginPath(); x.arc(0,0,r,0,Math.PI*2); x.fill();
+    x.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const clayBump = clayBumpTexture();
+function clay(color){
+  return new THREE.MeshStandardMaterial({
+    color, roughness: 0.88, metalness: 0,
+    bumpMap: clayBump, bumpScale: 0.004,
+    envMap: cubeRT.texture, envMapIntensity: 0.10,
+    fog: false
+  });
+}
+
+const barGeo = roundedBarGeo(0.048, 0.20, 0.05, 0.022);
+const bars = [];
+for(let i=0;i<12;i++){
+  const a = i/12 * Math.PI*2;
+  const bar = new THREE.Mesh(barGeo, clay(barColors[i]));
+  bar.position.set(Math.sin(a)*1.02, Math.cos(a)*1.02, 0);
+  bar.rotation.z = -a;
+  bar.userData = {
+    a,
+    phase: Math.random()*Math.PI*2,
+    speed: 0.8 + Math.random()*0.6,
+    zAmp: 0.085 + Math.random()*0.055,
+    rAmp: 0.028 + Math.random()*0.022,
+    tilt: 0.09 + Math.random()*0.07
+  };
+  bars.push(bar);
+  clock3D.add(bar);
+}
+
+// soft rounded hands: curved base corners, arched tip, deep bevel all around
+function handGeometry(len, baseW, tipW, depth){
+  const s = new THREE.Shape();
+  const r0 = baseW * 0.42;
+  s.moveTo(-baseW/2, -0.10 + r0);
+  s.quadraticCurveTo(-baseW/2, -0.10, -baseW/2 + r0, -0.10);
+  s.lineTo( baseW/2 - r0, -0.10);
+  s.quadraticCurveTo( baseW/2, -0.10,  baseW/2, -0.10 + r0);
+  s.lineTo( tipW/2,  len - 0.09);
+  s.quadraticCurveTo(0, len + 0.012, -tipW/2, len - 0.09); // rounded tip
+  s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, {
+    depth: depth*0.5, curveSegments: 10,
+    bevelEnabled:true, bevelThickness: depth*0.3,
+    bevelSize: Math.min(baseW*0.30, 0.020), bevelSegments: 5 });
+  g.translate(0, 0, -depth*0.25);
+  return g;
+}
+const handBlue = clay(0x7d93c9);
+const goldClay = clay(0xd9b36a);
+
+const hourHand   = new THREE.Mesh(handGeometry(0.52, 0.085, 0.05, 0.05), handBlue);
+const minuteHand = new THREE.Mesh(handGeometry(0.80, 0.065, 0.038, 0.045), handBlue);
+hourHand.position.z = 0.04;  minuteHand.position.z = 0.09;
+
+// second hand: one rounded clay needle, capped with little spheres
+const secondHand = new THREE.Group();
+const sShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 1.12, 14), goldClay);
+sShaft.position.y = 0.245;
+const sCapT = new THREE.Mesh(new THREE.SphereGeometry(0.011, 12, 12), goldClay);
+sCapT.position.y = 0.805;
+const sCapB = new THREE.Mesh(new THREE.SphereGeometry(0.016, 12, 12), goldClay);
+sCapB.position.y = -0.315;
+secondHand.add(sShaft, sCapT, sCapB);
+secondHand.position.z = 0.14;
+
+const hub = new THREE.Mesh(new THREE.SphereGeometry(0.075, 28, 28), goldClay);
+hub.scale.z = 0.62; hub.position.z = 0.14;
+
+// hands + hub live in one group so they drift together, like the bars
+const handsGroup = new THREE.Group();
+handsGroup.add(hourHand, minuteHand, secondHand, hub);
+clock3D.add(handsGroup);
+
+// the dial draws ON TOP of the frosted shell so it stays crisp
+// while everything behind the bubble goes soft
+clock3D.traverse(o=>{
+  if(o.isMesh){ o.renderOrder = 4; o.material.transparent = true; }
+});
+
+// every loose piece of the clock, with its home pose — when the bubble
+// bursts, each falls independently the moment the death front passes it
+const dialPieces = [...bars, hourHand, minuteHand, secondHand, hub];
+for(const o of dialPieces){
+  o.userData.home = { p:o.position.clone(), r:new THREE.Euler().copy(o.rotation) };
+  o.userData.fall = null;
+}
+function dialFallStep(front, dt){
+  for(const o of dialPieces){
+    const f = o.userData.fall;
+    if(!f) continue;
+    if(!f.released && front >= f.ang){
+      f.released = true;
+      // fling based on where the piece sits: outward from the hub, a touch up
+      const L = Math.hypot(o.position.x, o.position.y) || 1;
+      f.vel.set(o.position.x/L*0.22 + (Math.random()-0.5)*0.15,
+                o.position.y/L*0.18 + 0.12 + Math.random()*0.12,
+                (Math.random()-0.5)*0.12);
+    }
+    if(f.released){
+      f.vel.y -= 3.4*dt;
+      o.position.addScaledVector(f.vel, dt);
+      o.rotation.x += f.avel.x*dt;
+      o.rotation.y += f.avel.y*dt;
+      o.rotation.z += f.avel.z*dt;
+    }
+  }
+}
+
+/* ---------- bounce physics: the bubble roams the viewport ---------- */
+const vel = new THREE.Vector2(
+  (Math.random()<0.5?-1:1)*(0.30+Math.random()*0.14),
+  (Math.random()<0.5?-1:1)*(0.22+Math.random()*0.14));
+if(REDUCED) vel.multiplyScalar(0.3);
+let halfW=0, halfH=0;
+function computeBounds(){
+  halfH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)) * CAMZ;
+  halfW = halfH * camera.aspect;
+  // shrink the whole bubble on narrow screens so it always fits
+  const s = Math.min(1, (Math.min(halfW, halfH)*0.92) / (RADIUS*1.12));
+  bubbleGroup.scale.setScalar(s);
+}
+computeBounds();
+// damped-spring jelly: sqX/sqY are signed compression amounts per axis
+let sqX = 0, sqY = 0, sqVX = 0, sqVY = 0;
+let lean = 0; // smoothed roll that follows horizontal motion
+// inertial sway of the dial: it trails the bubble's motion like a body in liquid
+const sway = new THREE.Vector2(0,0), swayVel = new THREE.Vector2(0,0);
+let pvx = 0, pvy = 0;
+
+/* ---------- interaction ---------- */
+let px=0, py=0;
+addEventListener('pointermove', e=>{
+  px = (e.clientX/innerWidth - 0.5)*2;
+  py = (e.clientY/innerHeight - 0.5)*2;
+});
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  computeBounds();
+});
+
+/* ---------- loop ---------- */
+let prevMs = 0, frameN = 0;
+
+function animate(ms){
+  requestAnimationFrame(animate);
+  const t = ms*0.001;
+  const dt = Math.min((ms - prevMs)*0.001 || 0.016, 0.05);
+  prevMs = ms;
+  glassUniforms.uTime.value = t;
+  bgMat.uniforms.uTime.value = t;
+
+  /* ---- mini bubbles: drift, wall bounce, and pairwise collisions ---- */
+  for(const m of minis){
+    const u = m.userData;
+    if(u.dead || u.popping) continue;       // gone or frozen mid-unzip
+    if(u.entering){
+      // homing re-entry: steer toward the centre so nothing can deflect
+      // it off course; walls and collisions stay off until fully inside
+      const L = Math.hypot(m.position.x, m.position.y) || 1;
+      const k = Math.min(dt*1.6, 1);
+      u.vel.x += (-m.position.x/L*0.38 - u.vel.x)*k;
+      u.vel.y += (-m.position.y/L*0.38 - u.vel.y)*k;
+      m.position.x += u.vel.x*dt;
+      m.position.y += u.vel.y*dt;
+      if(Math.abs(m.position.x) < halfW - u.r &&
+         Math.abs(m.position.y) < halfH - u.r){
+        u.entering = false;
+        u.vel.normalize().multiplyScalar(u.cruise);  // settle to lazy cruise
+      }
+      continue;
+    }
+    // gentle wandering curvature so paths never look mechanical
+    u.vel.rotateAround({x:0,y:0}, Math.sin(t*0.13 + u.s*20.0)*0.0012);
+    m.position.x += u.vel.x*dt;
+    m.position.y += u.vel.y*dt;
+    // wall bounce on the shared plane
+    const bw = halfW - u.r;
+    const bh = halfH - u.r;
+    if(m.position.x >  bw){ m.position.x =  bw; u.vel.x = -Math.abs(u.vel.x); u.pulse = Math.min(u.pulse+0.5, 1); }
+    if(m.position.x < -bw){ m.position.x = -bw; u.vel.x =  Math.abs(u.vel.x); u.pulse = Math.min(u.pulse+0.5, 1); }
+    if(m.position.y >  bh){ m.position.y =  bh; u.vel.y = -Math.abs(u.vel.y); u.pulse = Math.min(u.pulse+0.5, 1); }
+    if(m.position.y < -bh){ m.position.y = -bh; u.vel.y =  Math.abs(u.vel.y); u.pulse = Math.min(u.pulse+0.5, 1); }
+  }
+  // (contacts are resolved in the unified solver below,
+  //  after the clock has integrated, so all bodies relax together)
+  for(const m of minis){
+    const u = m.userData;
+    // per-bubble shader state (centre feeds both ghost math and the pop front)
+    u.u.uTime.value = t;
+    u.u.uCenter.value.copy(m.position);
+    if(u.dead || u.popping || u.entering) continue;
+    // hold each bubble near its own lazy cruise speed
+    const sp = u.vel.length();
+    if(sp > 0.0001) u.vel.multiplyScalar(1 + (u.cruise - sp)/sp * Math.min(dt*0.8, 1));
+    // soft jelly pulse on impact, decaying back to round
+    u.pulse *= Math.exp(-dt*4.5);
+    const squish = 1 - u.pulse*0.07;
+    m.scale.set(u.s*squish, u.s*(1 + u.pulse*0.06), u.s);
+    u.u.uVel.value.lerp(u.vel, Math.min(dt*3, 1));
+  }
+
+  /* drift + soft bounce off the viewport edges */
+  const effR = RADIUS * bubbleGroup.scale.x * 1.05;
+  const maxX = Math.max(0, halfW - effR);
+  const maxY = Math.max(0, halfH - effR);
+  const clockAlive = clockPop.state === 'alive';
+
+  if(clockAlive){
+    if(clockPop.entering){
+      // homing re-entry: aim at the centre until fully on screen
+      const L = Math.hypot(bubbleGroup.position.x, bubbleGroup.position.y) || 1;
+      const tgt = REDUCED ? 0.14 : 0.42;
+      const k = Math.min(dt*1.4, 1);
+      vel.x += (-bubbleGroup.position.x/L*tgt - vel.x)*k;
+      vel.y += (-bubbleGroup.position.y/L*tgt - vel.y)*k;
+    } else {
+      // gentle wandering: the heading slowly curves, never in straight lines
+      vel.rotateAround({x:0,y:0}, Math.sin(t*0.16)*0.0009);
+    }
+    bubbleGroup.position.x += vel.x*dt;
+    bubbleGroup.position.y += vel.y*dt + Math.sin(t*0.9)*0.0015; // faint buoyancy
+    // a returning clock ignores walls until it has fully drifted on screen
+    if(clockPop.entering &&
+       Math.abs(bubbleGroup.position.x) < maxX &&
+       Math.abs(bubbleGroup.position.y) < maxY) clockPop.entering = false;
+  }
+
+  // soft walls: inside a cushion zone the wall pushes back smoothly,
+  // compressing the shell in proportion to how deep it has sunk in
+  const CUSHION = 0.5;
+  function softWall(pos, v, max){
+    let depth = 0;
+    const hi = pos - (max - CUSHION), lo = -(max - CUSHION) - pos;
+    if(hi > 0){ // near/inside right wall
+      depth = Math.min(hi / CUSHION, 1);
+      v -= depth*depth * 14.0 * dt;            // smooth push-back
+      if(pos > max){ pos = max; v = -Math.abs(v); }
+    } else if(lo > 0){
+      depth = Math.min(lo / CUSHION, 1);
+      v += depth*depth * 14.0 * dt;
+      if(pos < -max){ pos = -max; v = Math.abs(v); }
+    }
+    return [pos, v, depth];
+  }
+  let dx = 0, dy = 0;
+  if(clockAlive && !clockPop.entering){
+    [bubbleGroup.position.x, vel.x, dx] = softWall(bubbleGroup.position.x, vel.x, maxX);
+    [bubbleGroup.position.y, vel.y, dy] = softWall(bubbleGroup.position.y, vel.y, maxY);
+  }
+
+  /* ---- unified contact solver ----
+     all contacts (mini↔mini AND mini↔clock) relax together over three
+     iterations, after every body has integrated. restitution only fires
+     above a speed threshold; below it contacts are inelastic — that is
+     what kills the shaking when a crowd presses against the clock. */
+  {
+    const clockR = RADIUS * bubbleGroup.scale.x;
+    const clockMass = 7.0;
+    const REST_V = 0.06;                 // below this, no bounce — just rest
+    for(let iter = 0; iter < 3; iter++){
+      // mini ↔ mini
+      for(let i = 0; i < minis.length; i++){
+        const A = minis[i], ua = A.userData;
+        if(ua.dead || ua.popping || ua.entering) continue;
+        for(let j = i+1; j < minis.length; j++){
+          const B = minis[j], ub = B.userData;
+          if(ub.dead || ub.popping || ub.entering) continue;
+          const ddx = B.position.x - A.position.x;
+          const ddy = B.position.y - A.position.y;
+          const dist = Math.sqrt(ddx*ddx + ddy*ddy) || 0.0001;
+          const minD = ua.r + ub.r;
+          if(dist >= minD) continue;
+          const nx = ddx/dist, ny = ddy/dist;
+          const corr = Math.max(minD - dist - 0.004, 0) * 0.3;  // gentle per-iteration
+          const im = 1/(ua.mass + ub.mass);
+          A.position.x -= nx*corr*ub.mass*im;  A.position.y -= ny*corr*ub.mass*im;
+          B.position.x += nx*corr*ua.mass*im;  B.position.y += ny*corr*ua.mass*im;
+          const rvn = (ub.vel.x - ua.vel.x)*nx + (ub.vel.y - ua.vel.y)*ny;
+          if(rvn < 0){
+            const e = -rvn > REST_V ? 0.9 : 0.0;
+            const jI = -(1+e)*rvn / (1/ua.mass + 1/ub.mass);
+            ua.vel.x -= nx*jI/ua.mass;  ua.vel.y -= ny*jI/ua.mass;
+            ub.vel.x += nx*jI/ub.mass;  ub.vel.y += ny*jI/ub.mass;
+            if(-rvn > REST_V*1.4){
+              const hit = Math.min(-rvn*1.6, 1);
+              ua.pulse = Math.min(ua.pulse + hit, 1);
+              ub.pulse = Math.min(ub.pulse + hit, 1);
+            }
+          }
+        }
+        // mini ↔ clock (same iteration, so the crowd settles consistently)
+        if(!clockAlive || clockPop.entering) continue;
+        const cdx = A.position.x - bubbleGroup.position.x;
+        const cdy = A.position.y - bubbleGroup.position.y;
+        const dist = Math.hypot(cdx, cdy) || 0.0001;
+        const minD = clockR + ua.r;
+        if(dist >= minD) continue;
+        const nx = cdx/dist, ny = cdy/dist;
+        const corr = Math.max(minD - dist - 0.004, 0) * 0.35;
+        const im = 1/(clockMass + ua.mass);
+        A.position.x += nx*corr*clockMass*im;
+        A.position.y += ny*corr*clockMass*im;
+        bubbleGroup.position.x -= nx*corr*ua.mass*im;
+        bubbleGroup.position.y -= ny*corr*ua.mass*im;
+        const rvn = (ua.vel.x - vel.x)*nx + (ua.vel.y - vel.y)*ny;
+        if(rvn < 0){
+          const e = -rvn > REST_V ? 0.88 : 0.0;
+          const jI = -(1+e)*rvn / (1/clockMass + 1/ua.mass);
+          ua.vel.x += nx*jI/ua.mass;  ua.vel.y += ny*jI/ua.mass;
+          vel.x   -= nx*jI/clockMass; vel.y -= ny*jI/clockMass;
+          if(-rvn > REST_V*1.4){
+            const hit = Math.min(-rvn*1.4, 1);
+            ua.pulse = Math.min(ua.pulse + hit, 1);
+            // jelly kick on the clock — clamped so a crowd can't shake it
+            sqVX = THREE.MathUtils.clamp(sqVX + hit*Math.abs(nx)*1.2, -2.5, 2.5);
+            sqVY = THREE.MathUtils.clamp(sqVY + hit*Math.abs(ny)*1.2, -2.5, 2.5);
+          }
+        }
+      }
+    }
+  }
+
+  /* ---- pop lifecycle: linear front, rim mist, 3s respawn ---- */
+  const FRONT_SPEED = Math.PI / POP_DUR;            // constant — real film retracts linearly
+  for(const m of minis){
+    const u = m.userData;
+    if(u.popping){
+      const front = (t - u.popT) * FRONT_SPEED;
+      u.u.uPopFront.value = front;
+      if(front < Math.PI)
+        shedRing(m.position, u.popDirV, u.popT1, u.popT2, front, u.r, 8);
+      else {
+        // the point opposite the tap winks out last — now it's gone
+        u.popping = false; u.dead = true; m.visible = false;
+        u.respawnAt = t + 3;
+      }
+    } else if(u.dead && t >= u.respawnAt){
+      respawnMini(m);
+    }
+  }
+  if(clockPop.state === 'popping'){
+    const front = (t - clockPop.popT) * FRONT_SPEED;
+    glassUniforms.uPopFront.value = front;
+    if(front < Math.PI)
+      shedRing(bubbleGroup.position, clockPop.dir, clockPop.t1, clockPop.t2,
+               front, RADIUS*bubbleGroup.scale.x, 16);
+    else {
+      bubbleBack.visible = bubbleFront.visible = false;
+      clockPop.state = 'falling';
+      clockPop.fallT = t;
+      clockPop.respawnAt = t + 3;
+    }
+    dialFallStep(front, dt);          // pieces release AS the front passes them
+  } else if(clockPop.state === 'falling'){
+    dialFallStep(Math.PI, dt);        // everything released; keep falling
+    if(t >= clockPop.respawnAt) respawnClock(t);
+  }
+
+  // droplet mist: drifts on its fling, then gravity takes it
+  for(let i = 0; i < MAXP; i++){
+    if(pAge[i] >= pLife[i]) { pAlpha[i] = 0; continue; }
+    pAge[i] += dt;
+    pVel[i*3+1] -= 2.6*dt;
+    pPos[i*3]   += pVel[i*3]*dt;
+    pPos[i*3+1] += pVel[i*3+1]*dt;
+    pPos[i*3+2] += pVel[i*3+2]*dt;
+    pAlpha[i] = Math.max(1 - pAge[i]/pLife[i], 0);
+  }
+  pGeo.attributes.position.needsUpdate = true;
+  pGeo.attributes.aAlpha.needsUpdate = true;
+  if(pSizeDirty){ pGeo.attributes.aSize.needsUpdate = true; pSizeDirty = false; }
+
+  // bounce lights ride two of the bubbles — moving colour bleed
+  bounceA.position.copy(minis[0].position);
+  bounceB.position.copy(minis[2].position);
+
+  // keep cruising speed steady so cushions never stall the bubble
+  const speed = vel.length(), CRUISE = REDUCED ? 0.14 : 0.42;
+  if(speed > 0.0001) vel.multiplyScalar(1 + (CRUISE - speed)/speed * Math.min(dt*1.5, 1));
+
+  // smoothed motion vector for the leading-edge rim light
+  glassUniforms.uVel.value.lerp(vel, Math.min(dt*3.0, 1));
+  glassUniforms.uCenter.value.copy(bubbleGroup.position);
+
+  /* jelly deformation: a damped spring driven by wall pressure.
+     it eases in as the bubble sinks into the cushion and rings
+     softly back to round after it leaves — no snapping */
+  const STIFF = 60, DAMP = 9.5;
+  sqVX += (dx*0.16 - sqX)*STIFF*dt - sqVX*DAMP*dt;
+  sqVY += (dy*0.16 - sqY)*STIFF*dt - sqVY*DAMP*dt;
+  sqX += sqVX*dt;  sqY += sqVY*dt;
+  // volume-ish preservation: compress one axis, bulge the other
+  const scaleX = 1 - sqX + sqY*0.7;
+  const scaleY = 1 - sqY + sqX*0.7;
+  bubbleBack.scale.set(scaleX, scaleY, 1 + (sqX + sqY)*0.35);
+  bubbleFront.scale.copy(bubbleBack.scale);
+
+  // the shell leans into its direction of travel; the dial stays level
+  lean += ((-vel.x*0.09 + Math.sin(t*0.2)*0.04) - lean) * Math.min(dt*2.5, 1);
+  bubbleGroup.rotation.z = lean;
+
+  if(clockAlive){
+    clock3D.rotation.z = -lean;
+    /* the dial is suspended in the liquid: it trails the motion slightly
+       and gets a soft kick from every bounce, then springs back to centre */
+    const ax = (vel.x - pvx)/Math.max(dt, 0.001);
+    const ay = (vel.y - pvy)/Math.max(dt, 0.001);
+    pvx = vel.x; pvy = vel.y;
+    const swTx = THREE.MathUtils.clamp(-vel.x*0.045 - ax*0.010, -0.10, 0.10);
+    const swTy = THREE.MathUtils.clamp(-vel.y*0.045 - ay*0.010, -0.10, 0.10);
+    swayVel.x += ((swTx - sway.x)*32 - swayVel.x*7.5)*dt;
+    swayVel.y += ((swTy - sway.y)*32 - swayVel.y*7.5)*dt;
+    sway.x += swayVel.x*dt;  sway.y += swayVel.y*dt;
+    clock3D.position.set(sway.x, sway.y, 0);
+    clock3D.rotation.x =  sway.y*0.55;   // and tips gently with the drift
+    clock3D.rotation.y = -sway.x*0.55;
+  }
+
+  // hour bars ride the shell's own wobble: each bar samples the membrane
+  // displacement at its nearest point on the sphere and follows it,
+  // so when the glass ripples, the ring of bars ripples with it
+  const floatAmt = REDUCED ? 0.3 : 1.0;
+  const wobAmp = glassUniforms.uWobble.value;
+  function shellW(dx, dy){ // same field as the glass vertex shader, at radius 1.55
+    const px = dx*1.55, py = dy*1.55;
+    return Math.sin(py*3.0 + t*1.35)*0.5
+         + Math.sin(px*4.2 - t*1.05)*0.3
+         + Math.sin(t*1.7)*0.2;
+  }
+  for(const bar of bars){
+    const u = bar.userData, ph = t*u.speed + u.phase;
+    if(u.fall && u.fall.released) continue;   // it's falling — physics owns it
+    // sample the membrane in the SHELL's rotated frame (the dial counter-rotates)
+    const aSh = u.a - lean;
+    const dx = Math.sin(u.a), dy = Math.cos(u.a);
+    const w  = shellW(Math.sin(aSh), Math.cos(aSh));
+    const r = 1.02
+            + w * wobAmp * 1.35                        // near-1:1 with the shell
+            + Math.sin(ph*0.8)*u.rAmp*0.4*floatAmt;    // plus its own faint current
+    // bars inherit the jelly squash so they deform with the bounce too
+    bar.position.set(
+      dx*r*scaleX,
+      dy*r*scaleY,
+      Math.sin(ph)*u.zAmp*0.5*floatAmt + w*wobAmp*0.7);
+    bar.rotation.set(
+      Math.sin(ph*0.9)*u.tilt*0.5*floatAmt,
+      Math.cos(ph*0.7)*u.tilt*0.5*floatAmt,
+      -u.a);
+  }
+
+  // the hands drift as one piece on their own current, hinged at the hub
+  if(clockAlive){
+    handsGroup.position.z = 0.02 + Math.sin(t*0.85 + 1.7)*0.05*floatAmt;
+    handsGroup.position.x = Math.sin(t*0.6 + 0.9)*0.012*floatAmt;
+    handsGroup.position.y = Math.cos(t*0.5 + 2.3)*0.012*floatAmt;
+    handsGroup.rotation.x = Math.sin(t*0.7 + 0.4)*0.05*floatAmt;
+    handsGroup.rotation.y = Math.cos(t*0.55 + 2.1)*0.05*floatAmt;
+  }
+
+  /* real time, smooth sweep — each hand keeps ticking right up until
+     the death front releases it, then physics owns its rotation */
+  const now = new Date();
+  const s = now.getSeconds() + now.getMilliseconds()/1000;
+  const m = now.getMinutes() + s/60;
+  const h = (now.getHours()%12) + m/60;
+  const held = o => !(o.userData.fall && o.userData.fall.released);
+  if(held(secondHand)) secondHand.rotation.z = -s/60 * Math.PI*2;
+  if(held(minuteHand)) minuteHand.rotation.z = -m/60 * Math.PI*2;
+  if(held(hourHand))   hourHand.rotation.z   = -h/12 * Math.PI*2;
+
+  /* subtle camera parallax, anchored to centre so bounds stay honest */
+  camera.position.x += ((px*0.25) - camera.position.x)*0.04;
+  camera.position.y += ((-py*0.18) - camera.position.y)*0.04;
+  camera.lookAt(0,0,0);
+
+  /* the soft shadow lands on the implied floor below — never on the film.
+     it belongs to the OBJECT (it fell through the film all along), so it
+     follows the falling dial and only disappears once the dial is gone */
+  {
+    const dialWX = bubbleGroup.position.x + clock3D.position.x;
+    const dialWY = bubbleGroup.position.y + clock3D.position.y;
+    const hN = THREE.MathUtils.clamp(maxY > 0.001 ? (dialWY + maxY)/(2*maxY) : 0.5, 0, 1);
+    groundShadow.position.set(dialWX*0.97, -halfH + 0.10, -0.7);
+    const fallFade = clockPop.state === 'falling'
+      ? Math.max(0, 1 - (t - clockPop.fallT)/1.2) : 1;
+    groundShadow.material.opacity = 0.30 * (1.0 - hN*0.72) * fallFade;
+    const sp = 1.0 + hN*0.85;
+    groundShadow.scale.set(sp, 1.0 + hN*0.25, 1);
+  }
+
+  /* the two offscreen passes alternate frames (each changes slowly,
+     so a 1-frame cadence is invisible) — halves the per-frame GPU load */
+  frameN++;
+  if(frameN % 2 === 0){
+    /* ghost source pass: the dial alone, head-on, into a small texture */
+    _cd.copy(camera.position).sub(bubbleGroup.position).normalize();
+    dialCam.position.copy(bubbleGroup.position).addScaledVector(_cd, 6);
+    dialCam.lookAt(bubbleGroup.position);
+    dialCam.updateMatrixWorld();
+    const dm = dialCam.matrixWorld.elements;
+    glassUniforms.uCamR.value.set(dm[0], dm[1], dm[2]);
+    glassUniforms.uCamU.value.set(dm[4], dm[5], dm[6]);
+    glassUniforms.uCenter.value.copy(bubbleGroup.position);
+    bubbleBack.visible = bubbleFront.visible = false;
+    bgMesh.visible = groundShadow.visible = false;
+    for(const m of minis) m.visible = false;
+    renderer.setRenderTarget(dialRT);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(scene, dialCam);
+    renderer.setRenderTarget(null);
+    bgMesh.visible = groundShadow.visible = true;
+    for(const m of minis) m.visible = !m.userData.dead;
+    const shellOn = clockPop.state === 'alive' || clockPop.state === 'popping';
+    bubbleBack.visible = bubbleFront.visible = shellOn;
+  } else {
+    /* env map ping-pong: minis read LAST frame's cube while THIS frame's
+       is written, so the glass siblings appear in each other's frost
+       without a feedback loop. the clock bubble reads the fresh one. */
+    for(const m of minis) m.userData.u.uEnv.value = cubeRead.texture;
+    bubbleGroup.visible = false;
+    cubeCam.renderTarget = cubeWrite;
+    cubeCam.position.copy(bubbleGroup.position);
+    cubeCam.update(renderer, scene);
+    bubbleGroup.visible = true;
+    glassUniforms.uEnv.value = cubeWrite.texture;
+    const swap = cubeRead; cubeRead = cubeWrite; cubeWrite = swap;
+  }
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
