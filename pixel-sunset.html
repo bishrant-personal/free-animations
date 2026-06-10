@@ -43,6 +43,27 @@
     transition: background 0.4s, color 0.4s, transform 0.15s;
     z-index: 10;
   "><span id="dnIcon">☀</span></button>
+  <button id="musicToggle" aria-label="Toggle music" style="
+    position: absolute; top: 68px; right: 16px;
+    width: 44px; height: 44px;
+    background: rgba(15, 22, 42, 0.72);
+    border: 1.5px solid rgba(255, 250, 220, 0.30);
+    border-radius: 50%;
+    color: rgba(220, 220, 235, 0.6);
+    font: 19px/1 system-ui, sans-serif;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none; padding: 0;
+    backdrop-filter: blur(6px);
+    transition: background 0.4s, color 0.4s, border-color 0.4s, box-shadow 0.4s, transform 0.15s;
+    z-index: 10;
+  "><span id="musicIcon">♪</span></button>
+  <a id="musicCredit" href="https://github.com/btahir/open-lofi" target="_blank" rel="noopener"
+     style="position: absolute; bottom: 10px; right: 14px; z-index: 10;
+     font: 10px/1.3 ui-monospace, 'SF Mono', Menlo, monospace;
+     color: rgba(255, 255, 255, 0.32); text-decoration: none; text-align: right;
+     opacity: 0; transition: opacity 0.5s; pointer-events: auto; user-select: none;">
+     ♪ <span id="musicTrackName">Tide Pools at Twilight</span><br>music: Open Lo-Fi (CC0)</a>
 </div>
 <script>
 (function() {
@@ -141,6 +162,56 @@
 
   // ── RTX lighting (always on) ──
   const rtxLevel = 1;
+
+  // ── Lo-fi soundtrack ──────────────────────────────────────────
+  // Tracks from Open Lo-Fi (github.com/btahir/open-lofi), CC0 1.0.
+  // Day → "Tide Pools at Twilight", Night → "Starlight in the Sand".
+  // Both loop and cross-fade with the day/night transition.
+  const MUSIC_VOL = 0.55;
+  const dayTrack   = new Audio('audio/tide-pools-at-twilight.mp3');
+  const nightTrack = new Audio('audio/starlight-in-the-sand.mp3');
+  dayTrack.loop = true;   nightTrack.loop = true;
+  dayTrack.volume = 0;    nightTrack.volume = 0;
+  dayTrack.preload = 'auto'; nightTrack.preload = 'auto';
+  let musicOn = false;
+  const musicBtn    = document.getElementById('musicToggle');
+  const musicIcon   = document.getElementById('musicIcon');
+  const musicCredit = document.getElementById('musicCredit');
+  const musicTrackName = document.getElementById('musicTrackName');
+
+  function applyMusicVolume() {
+    if (!musicOn) return;
+    const dayL = 1 - nightLevel;
+    dayTrack.volume   = Math.max(0, Math.min(1, dayL * MUSIC_VOL));
+    nightTrack.volume = Math.max(0, Math.min(1, nightLevel * MUSIC_VOL));
+    musicTrackName.textContent = nightLevel > 0.5 ? 'Starlight in the Sand' : 'Tide Pools at Twilight';
+  }
+
+  function setMusic(on) {
+    musicOn = on;
+    if (on) {
+      applyMusicVolume();
+      dayTrack.play().catch(() => {});
+      nightTrack.play().catch(() => {});
+      musicIcon.textContent = '♪';
+      musicBtn.style.borderColor = 'rgba(255, 235, 175, 0.55)';
+      musicBtn.style.color = 'rgba(255, 235, 175, 0.95)';
+      musicBtn.style.boxShadow = '0 0 9px rgba(255, 220, 150, 0.35)';
+      musicCredit.style.opacity = '1';
+    } else {
+      dayTrack.pause();
+      nightTrack.pause();
+      musicIcon.textContent = '♪';
+      musicBtn.style.borderColor = 'rgba(255, 250, 220, 0.30)';
+      musicBtn.style.color = 'rgba(220, 220, 235, 0.6)';
+      musicBtn.style.boxShadow = 'none';
+      musicCredit.style.opacity = '0';
+    }
+  }
+  musicBtn.addEventListener('click', e => { e.stopPropagation(); setMusic(!musicOn); });
+  musicBtn.addEventListener('mousedown', () => { musicBtn.style.transform = 'scale(0.92)'; });
+  musicBtn.addEventListener('mouseup', () => { musicBtn.style.transform = 'scale(1)'; });
+  musicBtn.addEventListener('mouseleave', () => { musicBtn.style.transform = 'scale(1)'; });
 
   // ── Tap interactions: crabs dig, ocean spawns shark fin ──
   canvas.addEventListener('pointerdown', e => {
@@ -1991,6 +2062,8 @@
     updateParticles(); drawParticles();
 
     drawLighting();
+
+    applyMusicVolume();
 
     t++;
     requestAnimationFrame(draw);
