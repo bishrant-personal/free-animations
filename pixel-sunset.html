@@ -213,6 +213,25 @@
   musicBtn.addEventListener('mouseup', () => { musicBtn.style.transform = 'scale(1)'; });
   musicBtn.addEventListener('mouseleave', () => { musicBtn.style.transform = 'scale(1)'; });
 
+  // Music on by default. Browsers block autoplay-with-sound until a user gesture,
+  // so we optimistically start it; if the play() promise rejects, we arm a one-shot
+  // listener that flips it on at the very first interaction (pointer or key) anywhere.
+  setMusic(true);
+  const armAutoplay = () => {
+    if (musicOn && (dayTrack.paused || nightTrack.paused)) {
+      dayTrack.play().catch(() => {});
+      nightTrack.play().catch(() => {});
+    }
+    if (!dayTrack.paused && !nightTrack.paused) {
+      window.removeEventListener('pointerdown', armAutoplay, true);
+      window.removeEventListener('keydown', armAutoplay, true);
+      window.removeEventListener('touchstart', armAutoplay, true);
+    }
+  };
+  window.addEventListener('pointerdown', armAutoplay, true);
+  window.addEventListener('keydown', armAutoplay, true);
+  window.addEventListener('touchstart', armAutoplay, true);
+
   // ── Tap interactions: crabs dig, ocean spawns shark fin ──
   canvas.addEventListener('pointerdown', e => {
     const rect = canvas.getBoundingClientRect();
