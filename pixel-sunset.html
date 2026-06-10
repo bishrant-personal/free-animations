@@ -25,7 +25,7 @@
 <body>
 <div class="scene-wrap">
 <div style="position: relative; width: 100%; height: 100vh;">
-  <canvas id="beach" width="480" height="280"
+  <canvas id="beach" width="720" height="420"
     style="width: 100%; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; display: block; object-fit: fill;">
   </canvas>
   <button id="dnToggle" aria-label="Toggle day and night" style="
@@ -48,9 +48,10 @@
 (function() {
   const canvas = document.getElementById('beach');
   const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  const S = 2;
+  const S = 3;
   const W = 240 * S, H = 140 * S;
+  canvas.width = W; canvas.height = H;
+  ctx.imageSmoothingEnabled = false;
 
   const C = {
     sky1:'#3F4F8F', sky2:'#5B5F9E', sky3:'#7F70AE', sky4:'#A77DB5',
@@ -137,6 +138,9 @@
   button.addEventListener('mousedown', () => { button.style.transform = 'scale(0.92)'; });
   button.addEventListener('mouseup', () => { button.style.transform = 'scale(1)'; });
   button.addEventListener('mouseleave', () => { button.style.transform = 'scale(1)'; });
+
+  // ── RTX lighting (always on) ──
+  const rtxLevel = 1;
 
   // ── Tap interactions: crabs dig, ocean spawns shark fin ──
   canvas.addEventListener('pointerdown', e => {
@@ -615,8 +619,11 @@
 
   const oceanColors = [C.oceanD, C.oceanM, C.oceanML, C.oceanL];
   const nightOceanColors = ['#06122A', '#0E1C38', '#172848', '#243660'];
-  const dayOceanCanvas = buildGradientCanvas(W, 39 * S, 60 * S, oceanColors);
-  const nightOceanCanvas = buildGradientCanvas(W, 39 * S, 60 * S, nightOceanColors);
+  // 50*S tall: must reach below the deepest wave top (109*S) so every
+  // water row repaints each frame — stale rows accumulate brightness
+  // under the RTX screen-composite pass.
+  const dayOceanCanvas = buildGradientCanvas(W, 50 * S, 60 * S, oceanColors);
+  const nightOceanCanvas = buildGradientCanvas(W, 50 * S, 60 * S, nightOceanColors);
 
   const daySandColors = ['#B58270', '#C99478', '#D8A488', '#E5B5A0', '#F2C8B5'];
   const dayDampColors = [C.wetDeep, C.wetMid, '#A77460'];
@@ -713,6 +720,14 @@
   let jellyHoverIdx = -1;
   const jellyHoverT = new Array(jellies.length).fill(0); // smooth hover 0→1 per jelly
   const miniJellies = [];
+  // Per-frame emissive light sources collected during draw, consumed by the RTX pass
+  const jellyLights = [];
+  const JELLY_LIGHT_RGB = {
+    cyan:   '120,240,210',
+    teal:   '110,170,230',
+    purple: '150,130,255',
+    pink:   '240,140,190'
+  };
 
   function drawBird(x, y, frame, big) {
     x = Math.floor(x); y = Math.floor(y);
@@ -876,6 +891,36 @@
       ctx.globalAlpha = 1;
     }
   }
+  // ── Ground shadows cast away from the sun (day) / moon (night) ──
+  function drawObjectShadows() {
+    const night = nightLevel > 0.5;
+    const strength = night ? nightLevel : 1 - nightLevel;
+    if (strength < 0.05) return;
+    const lightX = night ? moonX : sunX;
+    ctx.globalAlpha = 0.30 * strength;
+    setFill(night ? '#0A0C1E' : '#503028');
+    const castFrom = (x, w, baseY) => {
+      const dir = x + w / 2 >= lightX ? 1 : -1;
+      const len = Math.max(2, Math.round(w / S));
+      for (let k = 0; k < len; k++) {
+        const px = dir > 0 ? x + w + k * S : x - S - k * S;
+        if (px < 0 || px >= W) break;
+        const density = (1 - k / len) * 0.7;
+        if (TH(baseY, px) < density) ctx.fillRect(px, baseY, S, S);
+      }
+    };
+    for (const rock of rocks) {
+      if (rock.state !== 'solid') continue;
+      const s = ROCKS[rock.type];
+      castFrom(rock.x, s[0].length * S, rock.y + (s.length - 1) * S);
+    }
+    for (const c of crabs) {
+      if (c.digging) continue;
+      castFrom(c.x, 5 * S, c.y + 2 * S);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   const crabs = [
     {x: 60*S, y: 124*S, dir: 1, frame: 0, moveC: 0, speed: 14, minX: 50*S, maxX: 72*S, digging: false, digStart: 0},
     {x: 118*S, y: 131*S, dir: -1, frame: 0, moveC: 7, speed: 12, minX: 100*S, maxX: 135*S, digging: false, digStart: 0},
@@ -1149,6 +1194,7 @@
   }
 
   function drawJellies(alpha) {
+    jellyLights.length = 0;
     if (alpha <= 0.02) return;
     const cycle = W + JM * 2;
     const baseAlpha = alpha * 0.65;
@@ -1190,6 +1236,7 @@
       // ── Inner halo (smoothly expands and brightens on hover) ──
       const haloBase = j.size === 'large' ? 7*S : j.size === 'tiny' ? 3*S : 5*S;
       const haloR = Math.round(haloBase + hT * (9*S - haloBase));
+      jellyLights.push({ x, y, r: haloR * 2.8, rgb: JELLY_LIGHT_RGB[j.color], a: effAlpha * pulse * (0.55 + hT * 0.55) });
       const glowPow = 0.55 + hT * 0.17;
       ctx.globalAlpha = effAlpha * (0.85 + hT * 0.25);
       setFill(Halo);
@@ -1368,6 +1415,170 @@
       }
     }
     ctx.globalAlpha = 1;
+  }
+
+  // ── RTX LIGHTING PASS ──────────────────────────────────────────
+  // Post-process layer composited over the finished pixel frame:
+  // bloom around emitters, volumetric god rays, water specular,
+  // emissive jelly/bio glow, then vignette + colour grade.
+  // Rendered at art resolution (1 art pixel = 1 buffer pixel) and
+  // upscaled with smoothing off so the glow sits on the pixel grid.
+  const lightCanvas = document.createElement('canvas');
+  lightCanvas.width = W / S; lightCanvas.height = H / S;
+  const lctx = lightCanvas.getContext('2d');
+
+  // Static vignette gradient (built once, reused every frame)
+  const vignetteGrad = ctx.createRadialGradient(W/2, H*0.48, H*0.42, W/2, H*0.5, W*0.62);
+  vignetteGrad.addColorStop(0, 'rgba(8,6,20,0)');
+  vignetteGrad.addColorStop(0.72, 'rgba(8,6,20,0)');
+  vignetteGrad.addColorStop(1, 'rgba(8,6,20,0.32)');
+
+  function lightSpot(x, y, r, rgb, a) {
+    if (a <= 0.004) return;
+    const g = lctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(${rgb},${a})`);
+    g.addColorStop(0.5, `rgba(${rgb},${a * 0.35})`);
+    g.addColorStop(1, `rgba(${rgb},0)`);
+    lctx.fillStyle = g;
+    lctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  function drawLighting() {
+    const dayL = 1 - nightLevel;
+    const breathe = 0.9 + 0.1 * Math.sin(t * 0.012);
+
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.clearRect(0, 0, lightCanvas.width, lightCanvas.height);
+    lctx.setTransform(1 / S, 0, 0, 1 / S, 0, 0);
+    lctx.globalCompositeOperation = 'lighter';
+
+    // ── Sun: bloom + god rays + water specular (day) ──
+    if (dayL > 0.02) {
+      lightSpot(sunX, sunY, 64*S, '255,214,150', 0.42 * dayL * breathe);
+      lightSpot(sunX, sunY, 22*S, '255,240,200', 0.38 * dayL);
+
+      // Volumetric god rays — slowly rotating, individually flickering beams
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2 + t * 0.0011 + i * 0.4;
+        const flick = 0.5 + 0.5 * Math.sin(t * 0.007 + i * 2.3);
+        const len = (52 + 36 * flick) * S;
+        const half = 0.05 + 0.05 * flick;
+        const rg = lctx.createRadialGradient(sunX, sunY, 4*S, sunX, sunY, len);
+        rg.addColorStop(0, `rgba(255,216,160,${0.12 * dayL * flick})`);
+        rg.addColorStop(1, 'rgba(255,216,160,0)');
+        lctx.fillStyle = rg;
+        lctx.beginPath();
+        lctx.moveTo(sunX, sunY);
+        lctx.lineTo(sunX + Math.cos(ang - half) * len, sunY + Math.sin(ang - half) * len);
+        lctx.lineTo(sunX + Math.cos(ang + half) * len, sunY + Math.sin(ang + half) * len);
+        lctx.closePath();
+        lctx.fill();
+      }
+
+      // Specular streak on the water below the sun
+      lctx.save();
+      lctx.translate(sunX, 80 * S);
+      lctx.scale(0.30, 1);
+      const sg = lctx.createRadialGradient(0, 0, 0, 0, 0, 34 * S);
+      sg.addColorStop(0, `rgba(255,200,130,${0.30 * dayL * breathe})`);
+      sg.addColorStop(0.55, `rgba(255,170,110,${0.12 * dayL})`);
+      sg.addColorStop(1, 'rgba(255,150,100,0)');
+      lctx.fillStyle = sg;
+      lctx.fillRect(-34 * S, -34 * S, 68 * S, 68 * S);
+      lctx.restore();
+    }
+
+    // ── Moon: cool bloom + moonbeam, jelly & bio emissives (night) ──
+    if (nightLevel > 0.02) {
+      lightSpot(moonX, moonY, 40*S, '180,205,255', 0.26 * nightLevel * breathe);
+      lightSpot(moonX, moonY, 14*S, '230,240,255', 0.26 * nightLevel);
+
+      lctx.save();
+      lctx.translate(moonX, 76 * S);
+      lctx.scale(0.18, 1);
+      const mg = lctx.createRadialGradient(0, 0, 0, 0, 0, 30 * S);
+      mg.addColorStop(0, `rgba(190,215,255,${0.20 * nightLevel * breathe})`);
+      mg.addColorStop(1, 'rgba(190,215,255,0)');
+      lctx.fillStyle = mg;
+      lctx.fillRect(-30 * S, -30 * S, 60 * S, 60 * S);
+      lctx.restore();
+
+      // Emissive jellyfish glow (positions captured during drawJellies)
+      for (const L of jellyLights) lightSpot(L.x, L.y, L.r, L.rgb, L.a * 0.5 * nightLevel);
+
+      // Bioluminescent sparkle bloom — only the brightest pop
+      for (const p of bioluminescent) {
+        const twRaw = (Math.sin(t * p.twinkSpeed + p.twinkPhase) + 1) / 2;
+        const b = p.baseBright * (0.25 + 0.75 * Math.pow(twRaw, 1.8));
+        if (b < 0.6) continue;
+        lightSpot(p.x, p.y, 5 * S + b * 4 * S, '120,235,215', (b - 0.6) * 0.5 * nightLevel);
+      }
+    }
+
+    // ── Fade emitter light out across the surf zone ──
+    // Additive glow over the dithered foam blows out into saturated
+    // noise, so erase it progressively before the wave band.
+    lctx.globalCompositeOperation = 'destination-out';
+    const fadeG = lctx.createLinearGradient(0, 90 * S, 0, 110 * S);
+    fadeG.addColorStop(0, 'rgba(0,0,0,0)');
+    fadeG.addColorStop(1, 'rgba(0,0,0,0.88)');
+    lctx.fillStyle = fadeG;
+    lctx.fillRect(0, 90 * S, W, H - 90 * S);
+    lctx.globalCompositeOperation = 'lighter';
+
+    // ── Ground light: sun warmth / moonlight pooling on the beach ──
+    if (dayL > 0.02) {
+      lctx.save();
+      lctx.translate(sunX, 122 * S);
+      lctx.scale(2.4, 0.62);
+      const bg = lctx.createRadialGradient(0, 0, 0, 0, 0, 44 * S);
+      bg.addColorStop(0, `rgba(255,190,120,${0.20 * dayL * breathe})`);
+      bg.addColorStop(0.6, `rgba(255,170,105,${0.09 * dayL})`);
+      bg.addColorStop(1, 'rgba(255,160,100,0)');
+      lctx.fillStyle = bg;
+      lctx.fillRect(-44 * S, -44 * S, 88 * S, 88 * S);
+      lctx.restore();
+    }
+    if (nightLevel > 0.02) {
+      lctx.save();
+      lctx.translate(moonX, 122 * S);
+      lctx.scale(2.4, 0.62);
+      const mb = lctx.createRadialGradient(0, 0, 0, 0, 0, 40 * S);
+      mb.addColorStop(0, `rgba(165,195,255,${0.15 * nightLevel * breathe})`);
+      mb.addColorStop(0.6, `rgba(150,180,255,${0.06 * nightLevel})`);
+      mb.addColorStop(1, 'rgba(150,180,255,0)');
+      lctx.fillStyle = mb;
+      lctx.fillRect(-40 * S, -40 * S, 80 * S, 80 * S);
+      lctx.restore();
+    }
+
+    // ── Composite light buffer over the scene (pixel-grid upscale) ──
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = rtxLevel;
+    ctx.drawImage(lightCanvas, 0, 0, W, H);
+
+    // ── Colour grade: warm push by day, cool push by night ──
+    // soft-light keeps mid-tones in gamut (overlay blew out the foam)
+    ctx.globalCompositeOperation = 'soft-light';
+    if (dayL > 0.02) {
+      ctx.globalAlpha = rtxLevel * 0.22 * dayL;
+      ctx.fillStyle = '#FF9050';
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (nightLevel > 0.02) {
+      ctx.globalAlpha = rtxLevel * 0.25 * nightLevel;
+      ctx.fillStyle = '#3050A0';
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // ── Vignette ──
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = rtxLevel;
+    ctx.fillStyle = vignetteGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalAlpha = 1;
+    _curFill = null; // resync fillStyle cache after direct ctx.fillStyle writes
   }
 
   function drawDayNightOverlay(dayCanvas, nightCanvas, y) {
@@ -1766,6 +1977,7 @@
     drawDayNightOverlay(daySandCanvas, nightSandCanvas, SAND_Y);
 
     drawRocks();
+    drawObjectShadows();
 
     setFill('#6E4F45');
     ctx.fillRect(110*S, 134*S, S, S); ctx.fillRect(170*S, 133*S, 2*S, S);
@@ -1777,6 +1989,8 @@
 
     updateCrabs(); drawCrabs();
     updateParticles(); drawParticles();
+
+    drawLighting();
 
     t++;
     requestAnimationFrame(draw);
