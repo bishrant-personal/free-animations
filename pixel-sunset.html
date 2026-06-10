@@ -168,8 +168,11 @@
   // Day → "Tide Pools at Twilight", Night → "Starlight in the Sand".
   // Both loop and cross-fade with the day/night transition.
   const MUSIC_VOL = 0.55;
-  const dayTrack   = new Audio('audio/tide-pools-at-twilight.mp3');
-  const nightTrack = new Audio('audio/starlight-in-the-sand.mp3');
+  // Served via jsDelivr (CORS-enabled CDN for GitHub assets) so audio loads
+  // wherever the HTML is embedded, not only when served from the repo root.
+  const MUSIC_BASE = 'https://cdn.jsdelivr.net/gh/bishrant-personal/free-animations@main/audio/';
+  const dayTrack   = new Audio(MUSIC_BASE + 'tide-pools-at-twilight.mp3');
+  const nightTrack = new Audio(MUSIC_BASE + 'starlight-in-the-sand.mp3');
   dayTrack.loop = true;   nightTrack.loop = true;
   dayTrack.volume = 0;    nightTrack.volume = 0;
   dayTrack.preload = 'auto'; nightTrack.preload = 'auto';
