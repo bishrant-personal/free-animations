@@ -176,6 +176,11 @@
   dayTrack.loop = true;   nightTrack.loop = true;
   dayTrack.volume = 0;    nightTrack.volume = 0;
   dayTrack.preload = 'auto'; nightTrack.preload = 'auto';
+  dayTrack.crossOrigin = 'anonymous'; nightTrack.crossOrigin = 'anonymous';
+  // Start MUTED so browsers permit autoplay even inside sandboxed iframes
+  // (bishrant.com/playground uses a sandbox without allow="autoplay"); they
+  // unmute on the first user interaction anywhere on the page.
+  dayTrack.muted = true; nightTrack.muted = true;
   let musicOn = false;
   const musicBtn    = document.getElementById('musicToggle');
   const musicIcon   = document.getElementById('musicIcon');
@@ -194,6 +199,8 @@
     musicOn = on;
     if (on) {
       applyMusicVolume();
+      // If user has already gestured, this click counts as the unmute trigger.
+      if (unmuted) { dayTrack.muted = false; nightTrack.muted = false; }
       dayTrack.play().catch(() => {});
       nightTrack.play().catch(() => {});
       musicIcon.textContent = '♪';
@@ -216,24 +223,36 @@
   musicBtn.addEventListener('mouseup', () => { musicBtn.style.transform = 'scale(1)'; });
   musicBtn.addEventListener('mouseleave', () => { musicBtn.style.transform = 'scale(1)'; });
 
-  // Music on by default. Browsers block autoplay-with-sound until a user gesture,
-  // so we optimistically start it; if the play() promise rejects, we arm a one-shot
-  // listener that flips it on at the very first interaction (pointer or key) anywhere.
+  // Music on by default. Tracks begin MUTED — browsers always permit muted
+  // autoplay, even inside restrictive iframes. On the first real user gesture
+  // anywhere on the page we unmute, so playback is already running and just
+  // becomes audible. Robust against sandboxed iframes (e.g. bishrant.com/playground).
+  let unmuted = false;
   setMusic(true);
-  const armAutoplay = () => {
-    if (musicOn && (dayTrack.paused || nightTrack.paused)) {
-      dayTrack.play().catch(() => {});
-      nightTrack.play().catch(() => {});
-    }
-    if (!dayTrack.paused && !nightTrack.paused) {
-      window.removeEventListener('pointerdown', armAutoplay, true);
-      window.removeEventListener('keydown', armAutoplay, true);
-      window.removeEventListener('touchstart', armAutoplay, true);
-    }
+  const unmute = () => {
+    if (unmuted) return;
+    // (Re)kick play in case it never started, then unmute so it's audible.
+    Promise.all([
+      dayTrack.play().catch(e => e),
+      nightTrack.play().catch(e => e)
+    ]).then(() => {
+      if (musicOn) {
+        dayTrack.muted = false;
+        nightTrack.muted = false;
+      }
+      if (!dayTrack.paused && !nightTrack.paused) {
+        unmuted = true;
+        document.removeEventListener('pointerdown', unmute, true);
+        document.removeEventListener('keydown', unmute, true);
+        document.removeEventListener('touchstart', unmute, true);
+        document.removeEventListener('click', unmute, true);
+      }
+    });
   };
-  window.addEventListener('pointerdown', armAutoplay, true);
-  window.addEventListener('keydown', armAutoplay, true);
-  window.addEventListener('touchstart', armAutoplay, true);
+  document.addEventListener('pointerdown', unmute, true);
+  document.addEventListener('keydown', unmute, true);
+  document.addEventListener('touchstart', unmute, true);
+  document.addEventListener('click', unmute, true);
 
   // ── Tap interactions: crabs dig, ocean spawns shark fin ──
   canvas.addEventListener('pointerdown', e => {
