@@ -231,23 +231,20 @@
   setMusic(true);
   const unmute = () => {
     if (unmuted) return;
-    // (Re)kick play in case it never started, then unmute so it's audible.
-    Promise.all([
-      dayTrack.play().catch(e => e),
-      nightTrack.play().catch(e => e)
-    ]).then(() => {
-      if (musicOn) {
-        dayTrack.muted = false;
-        nightTrack.muted = false;
-      }
-      if (!dayTrack.paused && !nightTrack.paused) {
-        unmuted = true;
-        document.removeEventListener('pointerdown', unmute, true);
-        document.removeEventListener('keydown', unmute, true);
-        document.removeEventListener('touchstart', unmute, true);
-        document.removeEventListener('click', unmute, true);
-      }
-    });
+    unmuted = true;
+    // Tracks are already playing (muted) from setMusic(true), so flipping
+    // .muted is instantaneous and the user hears audio with zero delay.
+    // play() is re-kicked only as a safety net; we don't await it.
+    if (musicOn) {
+      dayTrack.muted = false;
+      nightTrack.muted = false;
+      if (dayTrack.paused)   dayTrack.play().catch(() => {});
+      if (nightTrack.paused) nightTrack.play().catch(() => {});
+    }
+    document.removeEventListener('pointerdown', unmute, true);
+    document.removeEventListener('keydown', unmute, true);
+    document.removeEventListener('touchstart', unmute, true);
+    document.removeEventListener('click', unmute, true);
   };
   document.addEventListener('pointerdown', unmute, true);
   document.addEventListener('keydown', unmute, true);
