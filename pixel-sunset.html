@@ -394,6 +394,8 @@
     // .muted is instantaneous and the user hears audio with zero delay.
     // play() is re-kicked only as a safety net; we don't await it.
     if (musicOn) {
+      // Skip the day track's quiet intro: audible playback starts at 0:02
+      if (dayTrack.currentTime < 2) dayTrack.currentTime = 2;
       dayTrack.muted = false;
       nightTrack.muted = false;
       if (dayTrack.paused)   dayTrack.play().catch(() => {});
