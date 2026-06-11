@@ -26,6 +26,160 @@
     width: 100%; height: 100vh;
     position: relative;
   }
+  /* ── CRT RETRO OVERLAY ─────────────────────────────────────────
+     Glass-and-phosphor layer stack above the whole scene, like the
+     animation is playing on an old tube television (no frame, just
+     the screen character):
+       .crt-rgb       — vertical RGB phosphor stripes (aperture grille)
+       .crt-scanlines — horizontal raster lines with interlace roll
+       .crt-rollbar   — slow bright band travelling down the screen
+       .crt-vignette  — strong tube-glass corner falloff + glare
+       #crtOverlay    — whole-stack phosphor flicker
+     All layers are pointer-events: none so taps pass through. */
+  #beach {
+    /* phosphors run hot: small contrast & saturation push */
+    filter: contrast(1.07) brightness(1.03) saturate(1.16);
+  }
+  #crtOverlay, #crtOverlay > div {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+  #crtOverlay {
+    z-index: 5;
+    animation: crtFlicker 3.2s steps(1) infinite;
+  }
+  .crt-rgb {
+    background: repeating-linear-gradient(
+      to right,
+      rgba(255, 60, 60, 0.055) 0px,  rgba(255, 60, 60, 0.055) 1px,
+      rgba(60, 255, 90, 0.045) 1px,  rgba(60, 255, 90, 0.045) 2px,
+      rgba(70, 110, 255, 0.060) 2px, rgba(70, 110, 255, 0.060) 3px
+    );
+  }
+  .crt-scanlines {
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.26) 0px, rgba(0, 0, 0, 0.26) 2px,
+      rgba(0, 0, 0, 0.00) 2px, rgba(0, 0, 0, 0.00) 5px
+    );
+    animation: crtScanRoll 0.9s linear infinite;
+  }
+  .crt-rollbar {
+    background: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0)    0%,
+      rgba(255, 255, 255, 0.05) 38%,
+      rgba(255, 255, 255, 0.09) 50%,
+      rgba(255, 255, 255, 0.05) 62%,
+      rgba(0, 0, 0, 0.06)       78%,
+      rgba(0, 0, 0, 0)          100%
+    );
+    height: 24vh;
+    inset: auto 0;
+    mix-blend-mode: screen;
+    animation: crtRollbar 7s linear infinite;
+  }
+  .crt-vignette {
+    background:
+      /* glass glare, upper-left */
+      radial-gradient(ellipse 60% 38% at 28% 12%,
+        rgba(210, 225, 255, 0.10) 0%,
+        rgba(210, 225, 255, 0.03) 55%,
+        rgba(210, 225, 255, 0) 100%),
+      /* tube corner falloff — ellipse sized so viewport corners land
+         past the 100% stop and get the full darkening */
+      radial-gradient(ellipse 75% 65% at 50% 50%,
+        rgba(0, 0, 0, 0)        46%,
+        rgba(0, 0, 0, 0.08)     64%,
+        rgba(0, 0, 0, 0.22)     80%,
+        rgba(2, 1, 8, 0.45)     92%,
+        rgba(2, 1, 8, 0.66)    100%);
+  }
+  @keyframes crtScanRoll {
+    from { background-position: 0 0; }
+    to   { background-position: 0 5px; }
+  }
+  @keyframes crtRollbar {
+    from { transform: translateY(-26vh); }
+    to   { transform: translateY(102vh); }
+  }
+  @keyframes crtFlicker {
+    0%    { opacity: 1.00; }
+    7%    { opacity: 0.92; }
+    9%    { opacity: 1.00; }
+    31%   { opacity: 0.96; }
+    33%   { opacity: 1.00; }
+    52%   { opacity: 0.90; }
+    54%   { opacity: 1.00; }
+    71%   { opacity: 0.95; }
+    73%   { opacity: 1.00; }
+    100%  { opacity: 1.00; }
+  }
+  /* ── CRT glitch tears: random horizontal colour-split lines that
+        appear, slip once, then heal (driven by JS scheduler) ── */
+  .crt-glitch {
+    position: absolute; left: 0; right: 0;
+    height: 3px; top: -10%;
+    opacity: 0;
+    pointer-events: none;
+    background: linear-gradient(90deg,
+      rgba(0,0,0,0) 0%,
+      rgba(255, 40, 90, 0.30) 12%,
+      rgba(0, 255, 220, 0.28) 38%,
+      rgba(255, 255, 255, 0.18) 55%,
+      rgba(80, 120, 255, 0.30) 76%,
+      rgba(0,0,0,0) 100%);
+    mix-blend-mode: screen;
+  }
+  /* ── Pixel-art UI ──
+     Buttons get stepped "pixel rounded" corners; icons are 7×7 sprites
+     painted with box-shadow (3px per pixel) in currentColor, so the
+     existing JS colour toggles restyle them automatically. */
+  :root {
+    --pixel-corners: polygon(
+      0 6px, 6px 6px, 6px 0,
+      calc(100% - 6px) 0, calc(100% - 6px) 6px, 100% 6px,
+      100% calc(100% - 6px), calc(100% - 6px) calc(100% - 6px),
+      calc(100% - 6px) 100%, 6px 100%, 6px calc(100% - 6px),
+      0 calc(100% - 6px));
+  }
+  .px-icon {
+    display: block;
+    width: 4px; height: 4px;
+    background: transparent;
+  }
+  /* sun: solid 3×3 disc with 8 detached rays */
+  .icon-sun {
+    box-shadow:
+      0 -12px, -8px -8px, 8px -8px,
+      -4px -4px, 0 -4px, 4px -4px,
+      -12px 0, -4px 0, 0 0, 4px 0, 12px 0,
+      -4px 4px, 0 4px, 4px 4px,
+      -8px 8px, 8px 8px,
+      0 12px;
+  }
+  /* moon: crescent open to the right */
+  .icon-moon {
+    box-shadow:
+      0 -12px, 4px -12px, 8px -12px,
+      -4px -8px, 0 -8px,
+      -8px -4px, -4px -4px,
+      -8px 0, -4px 0,
+      -8px 4px, -4px 4px,
+      -4px 8px, 0 8px,
+      0 12px, 4px 12px, 8px 12px;
+  }
+  /* eighth note: stem, flag, solid head */
+  .icon-note {
+    box-shadow:
+      4px -12px,
+      4px -8px, 8px -8px,
+      4px -4px, 12px -4px,
+      4px 0,
+      4px 4px,
+      -8px 8px, -4px 8px, 0 8px, 4px 8px,
+      -4px 12px, 0 12px;
+  }
 </style>
 </head>
 <body>
@@ -34,36 +188,38 @@
   <canvas id="beach" width="720" height="420"
     style="width: 100%; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; display: block; object-fit: fill;">
   </canvas>
+  <div id="crtOverlay" aria-hidden="true">
+    <div class="crt-rgb"></div>
+    <div class="crt-scanlines"></div>
+    <div class="crt-rollbar"></div>
+    <div class="crt-vignette"></div>
+  </div>
   <button id="dnToggle" aria-label="Toggle day and night" style="
     position: absolute; top: 16px; right: 16px;
     width: 44px; height: 44px;
-    background: rgba(15, 22, 42, 0.72);
-    border: 1.5px solid rgba(255, 250, 220, 0.45);
-    border-radius: 50%;
+    background: rgba(15, 22, 42, 0.85);
+    border: 3px solid rgba(255, 250, 220, 0.45);
+    clip-path: var(--pixel-corners);
     color: rgba(255, 235, 175, 0.95);
-    font: 20px/1 system-ui, sans-serif;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     user-select: none; padding: 0;
-    backdrop-filter: blur(6px);
-    transition: background 0.4s, color 0.4s, transform 0.15s;
+    transition: background 0.4s, color 0.4s, border-color 0.4s, transform 0.15s;
     z-index: 10;
-  "><span id="dnIcon">☀</span></button>
+  "><span id="dnIcon" class="px-icon icon-sun"></span></button>
   <button id="musicToggle" aria-label="Toggle music" style="
-    position: absolute; top: 68px; right: 16px;
+    position: absolute; top: 76px; right: 16px;
     width: 44px; height: 44px;
-    background: rgba(15, 22, 42, 0.72);
-    border: 1.5px solid rgba(255, 250, 220, 0.30);
-    border-radius: 50%;
+    background: rgba(15, 22, 42, 0.85);
+    border: 3px solid rgba(255, 250, 220, 0.30);
+    clip-path: var(--pixel-corners);
     color: rgba(220, 220, 235, 0.6);
-    font: 19px/1 system-ui, sans-serif;
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     user-select: none; padding: 0;
-    backdrop-filter: blur(6px);
-    transition: background 0.4s, color 0.4s, border-color 0.4s, box-shadow 0.4s, transform 0.15s;
+    transition: background 0.4s, color 0.4s, border-color 0.4s, transform 0.15s;
     z-index: 10;
-  "><span id="musicIcon">♪</span></button>
+  "><span id="musicIcon" class="px-icon icon-note"></span></button>
   <a id="musicCredit" href="https://github.com/btahir/open-lofi" target="_blank" rel="noopener"
      style="position: absolute; bottom: 10px; right: 14px; z-index: 10;
      font: 10px/1.3 ui-monospace, 'SF Mono', Menlo, monospace;
@@ -158,7 +314,7 @@
   const icon = document.getElementById('dnIcon');
   button.addEventListener('click', () => {
     targetNight = 1 - targetNight;
-    icon.textContent = targetNight ? '☾' : '☀';
+    icon.className = 'px-icon ' + (targetNight ? 'icon-moon' : 'icon-sun');
     button.style.background = targetNight ? 'rgba(40, 35, 70, 0.75)' : 'rgba(15, 22, 42, 0.72)';
     button.style.color = targetNight ? 'rgba(220, 220, 245, 0.95)' : 'rgba(255, 235, 175, 0.95)';
   });
@@ -209,18 +365,14 @@
       if (unmuted) { dayTrack.muted = false; nightTrack.muted = false; }
       dayTrack.play().catch(() => {});
       nightTrack.play().catch(() => {});
-      musicIcon.textContent = '♪';
       musicBtn.style.borderColor = 'rgba(255, 235, 175, 0.55)';
       musicBtn.style.color = 'rgba(255, 235, 175, 0.95)';
-      musicBtn.style.boxShadow = '0 0 9px rgba(255, 220, 150, 0.35)';
       musicCredit.style.opacity = '1';
     } else {
       dayTrack.pause();
       nightTrack.pause();
-      musicIcon.textContent = '♪';
       musicBtn.style.borderColor = 'rgba(255, 250, 220, 0.30)';
       musicBtn.style.color = 'rgba(220, 220, 235, 0.6)';
-      musicBtn.style.boxShadow = 'none';
       musicCredit.style.opacity = '0';
     }
   }
@@ -610,48 +762,62 @@
   const nightSkyCanvas = buildGradientCanvas(W, SKY_H, 0, nightSkyColors);
   const nsCtx = nightSkyCanvas.getContext('2d');
   nsCtx.imageSmoothingEnabled = false;
+  // Moon halo + body live in their own sprites (NOT baked into the sky)
+  // so the halo can visibly breathe each frame. Several halo sizes are
+  // pre-rendered with the same dither; draw() picks one per frame from
+  // the moon pulse and drifts it slightly.
   const moonHaloColors = ['#F4ECD0', '#C0B8A0', '#7A7C9E', '#42467A', '#2C3868'];
-  const moonHaloRx = 22 * S, moonHaloRy = 18 * S;
-  for (let py = -moonHaloRy; py <= moonHaloRy; py++) {
-    const ay = moonY + py;
-    if (ay < 0 || ay >= SKY_H) continue;
-    for (let px = -moonHaloRx; px <= moonHaloRx; px++) {
-      const ax = moonX + px;
-      if (ax < 0 || ax >= W) continue;
-      const ex = px / moonHaloRx, ey = py / moonHaloRy;
-      const d = Math.sqrt(ex*ex + ey*ey);
-      if (d > 1) continue;
-      const th = TH(ay, ax);
-      if (d > 0.70) { const fade = (d - 0.70) / 0.30; if (fade > th) continue; }
-      const dNorm = Math.min(d / 0.70, 1);
-      const gp = dNorm * (moonHaloColors.length - 1);
-      const idx = Math.floor(gp);
-      const frac = gp - idx;
-      const ci = (frac > th) ? Math.min(idx + 1, moonHaloColors.length - 1) : idx;
-      nsCtx.fillStyle = moonHaloColors[ci];
-      nsCtx.fillRect(ax, ay, 1, 1);
+  function buildMoonHalo(scale) {
+    const rx = Math.round(22 * S * scale), ry = Math.round(18 * S * scale);
+    const c = document.createElement('canvas');
+    c.width = rx * 2 + 2; c.height = ry * 2 + 2;
+    const cc = c.getContext('2d');
+    cc.imageSmoothingEnabled = false;
+    const cx0 = rx + 1, cy0 = ry + 1;
+    for (let py = -ry; py <= ry; py++) {
+      for (let px = -rx; px <= rx; px++) {
+        const ex = px / rx, ey = py / ry;
+        const d = Math.sqrt(ex*ex + ey*ey);
+        if (d > 1) continue;
+        const th = TH(moonY + py, moonX + px); // screen-aligned dither
+        if (d > 0.70) { const fade = (d - 0.70) / 0.30; if (fade > th) continue; }
+        const dNorm = Math.min(d / 0.70, 1);
+        const gp = dNorm * (moonHaloColors.length - 1);
+        const idx = Math.floor(gp);
+        const frac = gp - idx;
+        const ci = (frac > th) ? Math.min(idx + 1, moonHaloColors.length - 1) : idx;
+        cc.fillStyle = moonHaloColors[ci];
+        cc.fillRect(cx0 + px, cy0 + py, 1, 1);
+      }
     }
+    return c;
   }
+  const moonHalos = [0.86, 0.94, 1.02, 1.10, 1.18].map(buildMoonHalo);
+
   const moonRx = 9 * S, moonRy = 8 * S;
-  for (let py = -moonRy - 1; py <= moonRy + 1; py++) {
-    const ay = moonY + py;
-    if (ay < 0 || ay >= SKY_H) continue;
-    for (let px = -moonRx - 1; px <= moonRx + 1; px++) {
-      const ax = moonX + px;
-      if (ax < 0 || ax >= W) continue;
-      const d = Math.sqrt((px*px)/((7*S)*(7*S)) + (py*py)/((6.5*S)*(6.5*S)));
-      if (d > 1.2) continue;
-      const th = TH(ay, ax);
-      if (d <= 0.40) { nsCtx.fillStyle = '#FCF8E8'; nsCtx.fillRect(ax, ay, 1, 1); }
-      else if (d <= 0.65) { nsCtx.fillStyle = (th < 0.4) ? '#FCF8E8' : '#E8E0C8'; nsCtx.fillRect(ax, ay, 1, 1); }
-      else if (d <= 0.88) { nsCtx.fillStyle = '#D8D0B8'; nsCtx.fillRect(ax, ay, 1, 1); }
-      else if (d <= 1.02) { nsCtx.fillStyle = (th < 0.5) ? '#D8D0B8' : '#B8AC98'; nsCtx.fillRect(ax, ay, 1, 1); }
-      else { if ((d - 1.02) / 0.18 < th * 0.7) { nsCtx.fillStyle = '#988C78'; nsCtx.fillRect(ax, ay, 1, 1); } }
+  const moonSprite = document.createElement('canvas');
+  moonSprite.width = (moonRx + 2) * 2; moonSprite.height = (moonRy + 2) * 2;
+  {
+    const mc = moonSprite.getContext('2d');
+    mc.imageSmoothingEnabled = false;
+    const mx0 = moonRx + 2, my0 = moonRy + 2;
+    for (let py = -moonRy - 1; py <= moonRy + 1; py++) {
+      for (let px = -moonRx - 1; px <= moonRx + 1; px++) {
+        const d = Math.sqrt((px*px)/((7*S)*(7*S)) + (py*py)/((6.5*S)*(6.5*S)));
+        if (d > 1.2) continue;
+        const th = TH(moonY + py, moonX + px);
+        if (d <= 0.40) { mc.fillStyle = '#FCF8E8'; }
+        else if (d <= 0.65) { mc.fillStyle = (th < 0.4) ? '#FCF8E8' : '#E8E0C8'; }
+        else if (d <= 0.88) { mc.fillStyle = '#D8D0B8'; }
+        else if (d <= 1.02) { mc.fillStyle = (th < 0.5) ? '#D8D0B8' : '#B8AC98'; }
+        else { if ((d - 1.02) / 0.18 >= th * 0.7) continue; mc.fillStyle = '#988C78'; }
+        mc.fillRect(mx0 + px, my0 + py, 1, 1);
+      }
     }
-  }
-  for (const [cx, cy] of [[-3,-1],[2,-2],[1,2],[-2,3],[3,1]]) {
-    nsCtx.fillStyle = '#A89C84';
-    nsCtx.fillRect(moonX + cx*S, moonY + cy*S, S, S);
+    mc.fillStyle = '#A89C84';
+    for (const [mcx, mcy] of [[-3,-1],[2,-2],[1,2],[-2,3],[3,1]]) {
+      mc.fillRect(mx0 + mcx*S, my0 + mcy*S, S, S);
+    }
   }
 
   const stars = [];
@@ -1603,16 +1769,25 @@
       lctx.restore();
     }
 
-    // ── Moon: cool bloom + moonbeam, jelly & bio emissives (night) ──
+    // ── Moon: living glow + moonbeam, jelly & bio emissives (night) ──
     if (nightLevel > 0.02) {
-      lightSpot(moonX, moonY, 40*S, '180,205,255', 0.26 * nightLevel * breathe);
-      lightSpot(moonX, moonY, 14*S, '230,240,255', 0.26 * nightLevel);
+      // Two incommensurate sines → organic, never-repeating shimmer (0..1).
+      // The halo also drifts a hair off-centre, like light through moving air.
+      const moonPulse = 0.5 + 0.30 * Math.sin(t * 0.017) + 0.20 * Math.sin(t * 0.0093 + 1.7);
+      const mgx = moonX + Math.sin(t * 0.006) * 1.2 * S;
+      const mgy = moonY + Math.cos(t * 0.0047 + 0.8) * 0.8 * S;
+      lightSpot(mgx, mgy, (37 + 6 * moonPulse) * S, '180,205,255', (0.20 + 0.11 * moonPulse) * nightLevel);
+      lightSpot(moonX, moonY, 14*S, '230,240,255', (0.21 + 0.08 * moonPulse) * nightLevel);
+      // Faint outer corona swelling out of phase with the main halo
+      const corona = 0.5 + 0.5 * Math.sin(t * 0.011 + 2.6);
+      lightSpot(mgx, mgy, (50 + 9 * corona) * S, '150,180,235', (0.045 + 0.05 * corona) * nightLevel);
 
       lctx.save();
-      lctx.translate(moonX, 76 * S);
+      // Soft beam glow sways gently with the pixel reflection below it
+      lctx.translate(moonX + Math.sin(t * 0.016 + 0.7) * 1.6 * S, 76 * S);
       lctx.scale(0.18, 1);
       const mg = lctx.createRadialGradient(0, 0, 0, 0, 0, 30 * S);
-      mg.addColorStop(0, `rgba(190,215,255,${0.20 * nightLevel * breathe})`);
+      mg.addColorStop(0, `rgba(190,215,255,${(0.15 + 0.09 * moonPulse) * nightLevel})`);
       mg.addColorStop(1, 'rgba(190,215,255,0)');
       lctx.fillStyle = mg;
       lctx.fillRect(-30 * S, -30 * S, 60 * S, 60 * S);
@@ -1745,6 +1920,34 @@
     _curFill = null;
 
     drawDayNightOverlay(daySkyCanvas, nightSkyCanvas, 0);
+
+    // ── Living moon: halo breathes by cross-fading between adjacent
+    //    pre-rendered sprite sizes — continuous swell, no visible steps.
+    //    Static moon body drawn on top ──
+    if (nightLevel > 0.02) {
+      const mp = Math.max(0, Math.min(1,
+        0.5 + 0.30 * Math.sin(t * 0.017) + 0.20 * Math.sin(t * 0.0093 + 1.7)));
+      const fIdx = mp * (moonHalos.length - 1);
+      const i0 = Math.floor(fIdx);
+      const i1 = Math.min(i0 + 1, moonHalos.length - 1);
+      const f = fIdx - i0;
+      const driftX = Math.sin(t * 0.006) * 1.2 * S;
+      const driftY = Math.cos(t * 0.0047 + 0.8) * 0.8 * S;
+      const baseA = nightLevel * (0.80 + 0.20 * mp);
+      const h0 = moonHalos[i0], h1 = moonHalos[i1];
+      ctx.globalAlpha = baseA * (1 - f);
+      ctx.drawImage(h0, Math.round(moonX + driftX - h0.width / 2),
+                        Math.round(moonY + driftY - h0.height / 2));
+      if (f > 0.01 && i1 !== i0) {
+        ctx.globalAlpha = baseA * f;
+        ctx.drawImage(h1, Math.round(moonX + driftX - h1.width / 2),
+                          Math.round(moonY + driftY - h1.height / 2));
+      }
+      ctx.globalAlpha = nightLevel;
+      ctx.drawImage(moonSprite, moonX - (moonSprite.width >> 1), moonY - (moonSprite.height >> 1));
+      ctx.globalAlpha = 1;
+    }
+
     drawStars(nightLevel);
     drawConstellations(nightLevel);
 
@@ -1914,8 +2117,16 @@
       ctx.globalAlpha = nightLevel;
       for (let py = 60*S; py < 78*S; py++) {
         const ratio = (py - 60*S) / (18*S);
-        const halfW = Math.max(1, Math.floor(2*S * (1 - ratio * 0.5)));
-        const wobble = Math.floor(Math.sin(t * 0.022 + py * 0.22) * 0.5 * S);
+        // Reflection rides the waves: sway is multi-frequency (matching the
+        // wave timings) and grows with depth — near-still at the horizon,
+        // snaking visibly further down. Width breathes per-row like ripples
+        // spreading and gathering the light.
+        const sway = (Math.sin(t * 0.020 + py * 0.16) * 0.9
+                    + Math.sin(t * 0.012 - py * 0.085 + 1.4) * 0.7)
+                    * S * (0.35 + ratio * 1.5);
+        const wobble = Math.round(sway);
+        const widthPulse = Math.round(Math.sin(t * 0.017 + py * 0.28) * 0.9 * S * ratio);
+        const halfW = Math.max(1, Math.floor(2*S * (1 - ratio * 0.5)) + widthPulse);
         let col;
         if (ratio < 0.20) col = '#E8E0C0';
         else if (ratio < 0.50) col = '#A89880';
@@ -1937,7 +2148,7 @@
         const phase = i * 1.13;
         const blink = Math.sin(t * 0.05 + phase);
         if (blink > 0.5) {
-          const ax = moonX + gx + Math.floor(Math.sin(t * 0.02 + phase) * S);
+          const ax = moonX + gx + Math.floor(Math.sin(t * 0.02 + phase) * 1.8 * S);
           if (ax >= 0 && ax < W) {
             const col = blink > 0.85 ? '#E8E0C0' : '#9890A8';
             setFill(col); ctx.fillRect(ax, gy, 1, 1);
@@ -2112,6 +2323,39 @@
     t++;
     requestAnimationFrame(draw);
   }
+  // ── CRT glitch tears: random horizontal colour-split lines that appear,
+  //    slip once mid-life, then heal — like a tube momentarily losing sync ──
+  const crtOverlayEl = document.getElementById('crtOverlay');
+  const glitchStrips = [];
+  for (let i = 0; i < 3; i++) {
+    const d = document.createElement('div');
+    d.className = 'crt-glitch';
+    crtOverlayEl.appendChild(d);
+    glitchStrips.push(d);
+  }
+  function fireGlitch() {
+    const count = 1 + (Math.random() < 0.70 ? 1 : 0) + (Math.random() < 0.40 ? 1 : 0);
+    for (let i = 0; i < count; i++) {
+      const strip = glitchStrips[i];
+      const life = 70 + Math.random() * 180;
+      const startY = 4 + Math.random() * 92;
+      strip.style.top = startY + '%';
+      strip.style.height = (2 + Math.random() * 4).toFixed(0) + 'px';
+      strip.style.opacity = (0.30 + Math.random() * 0.40).toFixed(2);
+      strip.style.transform =
+        'translateX(' + (Math.random() * 16 - 8).toFixed(0) + 'px)' +
+        (Math.random() < 0.3 ? ' scaleY(2)' : '');
+      // mid-life slip before the tear heals
+      setTimeout(() => {
+        strip.style.top = (startY + (Math.random() * 6 - 3)) + '%';
+        strip.style.transform = 'translateX(' + (Math.random() * 16 - 8).toFixed(0) + 'px)';
+      }, life * 0.5);
+      setTimeout(() => { strip.style.opacity = '0'; }, life);
+    }
+    setTimeout(fireGlitch, 1500 + Math.random() * 4500);
+  }
+  setTimeout(fireGlitch, 1200 + Math.random() * 2000);
+
   draw();
 })();
 </script></div>
