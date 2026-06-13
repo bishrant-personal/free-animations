@@ -83,20 +83,45 @@
     animation: crtRollbar 7s linear infinite;
   }
   .crt-vignette {
+    /* tube corner falloff — ellipse sized so viewport corners land
+       past the 100% stop and get the full darkening. Deepened, since the
+       glass is "thicker" at the edges and absorbs more light. */
     background:
-      /* glass glare, upper-left */
-      radial-gradient(ellipse 60% 38% at 28% 12%,
-        rgba(210, 225, 255, 0.10) 0%,
-        rgba(210, 225, 255, 0.03) 55%,
-        rgba(210, 225, 255, 0) 100%),
-      /* tube corner falloff — ellipse sized so viewport corners land
-         past the 100% stop and get the full darkening */
-      radial-gradient(ellipse 75% 65% at 50% 50%,
-        rgba(0, 0, 0, 0)        46%,
-        rgba(0, 0, 0, 0.08)     64%,
-        rgba(0, 0, 0, 0.22)     80%,
-        rgba(2, 1, 8, 0.45)     92%,
-        rgba(2, 1, 8, 0.66)    100%);
+      radial-gradient(ellipse 76% 66% at 50% 50%,
+        rgba(0, 0, 0, 0)        42%,
+        rgba(0, 0, 0, 0.10)     62%,
+        rgba(0, 0, 0, 0.26)     78%,
+        rgba(2, 1, 8, 0.52)     91%,
+        rgba(1, 0, 6, 0.78)    100%);
+  }
+  /* ── Screen-warp: the canvas + overlay are wrapped here and refracted
+        through the SVG glass filter (barrel bulge + edge chromatic fringe).
+        Buttons/hint/credit live OUTSIDE this layer so they stay crisp. ── */
+  .screen-warp {
+    position: absolute; inset: 0;
+    filter: url(#crtGlass);
+    /* Overscan: the barrel pulls content inward at the edges, which would
+       expose empty gaps. Scaling the refracted result up slightly pushes
+       the bowed edges past the viewport so the picture fills it completely
+       (real CRTs overscan too). */
+    transform: scale(1.06);
+    transform-origin: center;
+  }
+  /* ── Surface reflection: a soft elliptical sheen near the top-centre,
+        like ambient light catching the convex glass. Sits ON the glass,
+        so it is NOT warped (drawn outside .screen-warp). ── */
+  .crt-reflection {
+    position: absolute; inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 52% 30% at 50% 4%,
+        rgba(228, 238, 255, 0.14) 0%,
+        rgba(228, 238, 255, 0.06) 42%,
+        rgba(228, 238, 255, 0) 74%),
+      radial-gradient(ellipse 90% 60% at 50% -8%,
+        rgba(210, 225, 255, 0.05) 0%,
+        rgba(210, 225, 255, 0) 60%);
   }
   @keyframes crtScanRoll {
     from { background-position: 0 0; }
@@ -170,7 +195,47 @@
         rgba(80, 120, 255, 0.45) 76%,
         rgba(0,0,0,0) 100%);
   }
-  /* ── Tap hint: retro pixel banner, top-left, ~5s then gone ── */
+  /* ── Defocus pulse: occasionally the whole picture goes soft and blooms
+        for a couple seconds, then snaps back — like a tube losing focus.
+        Keyframes carry the base filter so it cleanly reverts afterward. ── */
+  #beach.crt-defocus {
+    animation: crtDefocus var(--defocus-dur, 2.6s) ease-in-out;
+  }
+  @keyframes crtDefocus {
+    0%, 100% { filter: contrast(1.07) brightness(1.03) saturate(1.16) blur(0px); }
+    38%      { filter: contrast(1.00) brightness(1.07) saturate(1.26) blur(0.8px); }
+    58%      { filter: contrast(1.00) brightness(1.08) saturate(1.28) blur(1.0px); }
+  }
+  /* ── Chroma band: a soft multi-colour line that rolls in occasionally,
+        like colour sync drifting. Wider & blurrier than the sharp tears. ── */
+  .crt-chroma {
+    position: absolute; left: -2%; right: -2%;
+    height: 46px; top: 0;
+    opacity: 0;
+    pointer-events: none;
+    background: linear-gradient(180deg,
+      rgba(255, 40, 60, 0)    0%,
+      rgba(255, 40, 60, 0.17) 20%,
+      rgba(255, 225, 50, 0.13) 40%,
+      rgba(70, 255, 130, 0.12) 58%,
+      rgba(70, 170, 255, 0.16) 76%,
+      rgba(190, 80, 255, 0.17) 90%,
+      rgba(190, 80, 255, 0)  100%);
+    filter: blur(3px);
+    mix-blend-mode: screen;
+    will-change: transform, opacity;
+  }
+  .crt-chroma.run {
+    animation: crtChroma var(--chroma-dur, 2.6s) linear;
+  }
+  @keyframes crtChroma {
+    0%   { transform: translateY(var(--chroma-from, -16vh)); opacity: 0; }
+    16%  { opacity: 0.52; }
+    84%  { opacity: 0.42; }
+    100% { transform: translateY(var(--chroma-to, 114vh)); opacity: 0; }
+  }
+  /* ── Tap hint: retro pixel banner, top-left. Fades in on load, stays
+        until the user's first tap, then fades out for good. ── */
   #tapHint {
     position: absolute; top: 18px; left: 18px;
     z-index: 10;
@@ -186,14 +251,9 @@
     pointer-events: none;
     user-select: none;
     opacity: 0;
-    animation: tapHintLife 6.2s ease forwards;
+    transition: opacity 0.7s ease;
   }
-  @keyframes tapHintLife {
-    0%   { opacity: 0; }
-    6%   { opacity: 1; }
-    84%  { opacity: 1; }
-    100% { opacity: 0; }
-  }
+  #tapHint.show { opacity: 1; }
   /* ── Pixel-art UI ──
      Buttons get stepped "pixel rounded" corners; icons are 7×7 sprites
      painted with box-shadow (3px per pixel) in currentColor, so the
@@ -246,12 +306,41 @@
 </style>
 </head>
 <body>
+<!-- CRT glass refraction filter: radial displacement = barrel bulge, with
+     R/G/B displaced at slightly different scales for edge chromatic fringing -->
+<svg id="crtSvgFilters" width="0" height="0" aria-hidden="true"
+     style="position:absolute; width:0; height:0; overflow:hidden; pointer-events:none;">
+  <defs>
+    <filter id="crtGlass" x="-3%" y="-3%" width="106%" height="106%"
+            color-interpolation-filters="sRGB">
+      <feImage result="dmap" x="0" y="0" width="100%" height="100%" preserveAspectRatio="none"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cdefs%3E%3ClinearGradient id='x' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23ff0000'/%3E%3Cstop offset='0.18' stop-color='%23c00000'/%3E%3Cstop offset='0.5' stop-color='%23800000'/%3E%3Cstop offset='0.82' stop-color='%23400000'/%3E%3Cstop offset='1' stop-color='%23000000'/%3E%3C/linearGradient%3E%3ClinearGradient id='y' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%2300ff00'/%3E%3Cstop offset='0.18' stop-color='%2300c000'/%3E%3Cstop offset='0.5' stop-color='%23008000'/%3E%3Cstop offset='0.82' stop-color='%23004000'/%3E%3Cstop offset='1' stop-color='%23000000'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='128' height='128' fill='%23000000'/%3E%3Crect width='128' height='128' fill='url(%23x)'/%3E%3Crect width='128' height='128' fill='url(%23y)' style='mix-blend-mode:screen'/%3E%3C/svg%3E"/>
+      <!-- red channel: largest displacement -->
+      <feDisplacementMap in="SourceGraphic" in2="dmap" scale="19"
+        xChannelSelector="R" yChannelSelector="G" result="dR"/>
+      <feColorMatrix in="dR" type="matrix" result="rOnly"
+        values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0"/>
+      <!-- green channel: middle displacement (the barrel baseline) -->
+      <feDisplacementMap in="SourceGraphic" in2="dmap" scale="15"
+        xChannelSelector="R" yChannelSelector="G" result="dG"/>
+      <feColorMatrix in="dG" type="matrix" result="gOnly"
+        values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0"/>
+      <!-- blue channel: smallest displacement -->
+      <feDisplacementMap in="SourceGraphic" in2="dmap" scale="11"
+        xChannelSelector="R" yChannelSelector="G" result="dB"/>
+      <feColorMatrix in="dB" type="matrix" result="bOnly"
+        values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0"/>
+      <feBlend in="rOnly" in2="gOnly" mode="screen" result="rg"/>
+      <feBlend in="rg" in2="bOnly" mode="screen"/>
+    </filter>
+  </defs>
+</svg>
 <div class="scene-wrap">
 <div style="position: relative; width: 100%; height: 100vh;">
+  <div class="screen-warp">
   <canvas id="beach" width="720" height="420"
     style="width: 100%; height: 100vh; image-rendering: pixelated; image-rendering: crisp-edges; display: block; object-fit: fill;">
   </canvas>
-  <div id="tapHint" aria-hidden="true">TAP AROUND TO INTERACT</div>
   <div id="crtOverlay" aria-hidden="true">
     <div class="crt-rgb"></div>
     <div class="crt-scanlines"></div>
@@ -259,6 +348,9 @@
     <div class="crt-rollbar"></div>
     <div class="crt-vignette"></div>
   </div>
+  </div>
+  <div class="crt-reflection" aria-hidden="true"></div>
+  <div id="tapHint" aria-hidden="true">TAP AROUND TO INTERACT</div>
   <button id="dnToggle" aria-label="Toggle day and night" style="
     position: absolute; top: 16px; right: 16px;
     width: 44px; height: 44px;
@@ -452,9 +544,15 @@
   // becomes audible. Robust against sandboxed iframes (e.g. bishrant.com/playground).
   let unmuted = false;
   setMusic(true);
+
+  // Tap hint: fade in shortly after load, persists until the first gesture.
+  const tapHintEl = document.getElementById('tapHint');
+  setTimeout(() => tapHintEl.classList.add('show'), 400);
+
   const unmute = () => {
     if (unmuted) return;
     unmuted = true;
+    tapHintEl.classList.remove('show'); // dismiss the hint on first interaction
     // Tracks are already playing (muted) from setMusic(true), so flipping
     // .muted is instantaneous and the user hears audio with zero delay.
     // play() is re-kicked only as a safety net; we don't await it.
@@ -2435,14 +2533,44 @@
       }, life * 0.5);
       setTimeout(() => { strip.style.opacity = '0'; }, life);
     }
-    // Rarely the whole picture loses horizontal hold for a moment
-    if (Math.random() < 0.12) {
-      canvas.classList.add('sync-wobble');
-      setTimeout(() => canvas.classList.remove('sync-wobble'), 180 + Math.random() * 220);
+    // Rarely the tube also loses stability — pick at most ONE of
+    // {horizontal-hold wobble, focus loss} so the two don't fight over
+    // the canvas's single animation slot.
+    if (!canvas.classList.contains('crt-defocus') && !canvas.classList.contains('sync-wobble')) {
+      const r = Math.random();
+      if (r < 0.12) {
+        canvas.classList.add('sync-wobble');
+        setTimeout(() => canvas.classList.remove('sync-wobble'), 180 + Math.random() * 220);
+      } else if (r < 0.22) {
+        const dur = 2.2 + Math.random() * 1.2;
+        canvas.style.setProperty('--defocus-dur', dur.toFixed(2) + 's');
+        canvas.classList.add('crt-defocus');
+        setTimeout(() => canvas.classList.remove('crt-defocus'), dur * 1000 + 60);
+      }
     }
     setTimeout(fireGlitch, 1500 + Math.random() * 4500);
   }
   setTimeout(fireGlitch, 1200 + Math.random() * 2000);
+
+  // ── Chroma band: soft multi-colour line rolls through occasionally,
+  //    on its own slower, irregular cadence (rarer than the tears) ──
+  const chromaEl = document.createElement('div');
+  chromaEl.className = 'crt-chroma';
+  crtOverlayEl.appendChild(chromaEl);
+  function fireChroma() {
+    // Always rolls in from the top
+    chromaEl.style.setProperty('--chroma-from', '-16vh');
+    chromaEl.style.setProperty('--chroma-to', '114vh');
+    chromaEl.style.setProperty('--chroma-dur', (2.0 + Math.random() * 2.2).toFixed(2) + 's');
+    chromaEl.style.height = (34 + Math.random() * 40).toFixed(0) + 'px';
+    chromaEl.style.filter = 'blur(' + (2.5 + Math.random() * 2).toFixed(1) + 'px) hue-rotate('
+      + ((Math.random() * 120 - 60) | 0) + 'deg)';
+    chromaEl.classList.remove('run');
+    void chromaEl.offsetWidth;       // reflow so the animation restarts
+    chromaEl.classList.add('run');
+    setTimeout(fireChroma, 7000 + Math.random() * 12000);
+  }
+  setTimeout(fireChroma, 4000 + Math.random() * 5000);
 
   draw();
 })();
