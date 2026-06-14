@@ -19,8 +19,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0c0a09;
-    --bg-warm: #14100d;
+    --bg: #1c1713;
+    --bg-warm: #241d17;
     --card: #ece3d8;
     --card-edge: #d8cdbf;
     --row: #ddd2c4;
@@ -50,7 +50,10 @@
       var(--bg);
   }
 
-  /* subtle grain */
+  /* subtle grain — sits BELOW the canvas (z-index 0) so its blend backdrop is
+     the STATIC background, not the animating canvas. Blending over the live
+     canvas every frame was forcing an intermediate-buffer recomposite (the
+     hover hitch); blending over the static body costs nothing per frame. */
   body::before {
     content: '';
     position: fixed;
@@ -59,19 +62,20 @@
     opacity: 0.5;
     mix-blend-mode: overlay;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.08 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-    z-index: 1;
+    z-index: 0;
   }
 
   .canvas-area {
     flex: 1;
     position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
   }
 
-  canvas { display: block; }
+  canvas { display: block; will-change: transform; }
 
   /* CONTROL PANEL */
   .panel {
@@ -82,7 +86,7 @@
     flex-direction: column;
     justify-content: center;
     gap: 8px;
-    z-index: 2;
+    z-index: 3;
   }
 
   .card {
@@ -146,9 +150,35 @@
   }
   .row.scrubbing { transition: none; }
 
-  /* text row stays flat */
-  .row.text-row { background: var(--row); cursor: text; }
-  .row.text-row:hover { background: var(--row-hover); }
+  /* text row — taller stacked field: small "Enter Text" label on top,
+     the editable word below in a larger font. Darker shade than other rows. */
+  .row.text-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    padding: 7px 12px;
+    background: #c6b9a7;
+    cursor: text;
+  }
+  .row.text-row:hover { background: #bdb09d; }
+  .row.text-row .label {
+    font-size: 9.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .row.text-row .value {
+    font-size: 16px;
+    font-weight: 700;
+    text-align: left;
+    margin: 0 -6px;
+    padding: 2px 6px;
+    /* wrap onto more lines rather than truncating (text is capped at 30 chars
+       so it stays at most a couple of lines) */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+  }
 
   .label, .value {
     position: relative;
@@ -188,16 +218,16 @@
     cursor: text;
   }
 
-  /* text-row labels: plain colors (no need for blend on flat bg) */
+  /* text-row: muted label on top, prominent (dark) word below — reversed
+     from the usual row treatment */
   .row.text-row .label,
   .row.text-row .value {
     mix-blend-mode: normal;
-    color: var(--ink);
   }
-  .row.text-row .value { color: var(--ink-soft); }
+  .row.text-row .label { color: var(--ink-soft); }
+  .row.text-row .value { color: var(--ink); }
   .row.text-row .value:hover {
     background: rgba(58, 53, 47, 0.07);
-    color: var(--ink);
   }
 
   /* palette swatches */
@@ -213,6 +243,7 @@
   .palette-bar-label {
     font-family: 'Inter', sans-serif;
     font-size: 11px;
+    font-weight: 600;
     color: var(--ink);
     letter-spacing: -0.01em;
   }
@@ -245,95 +276,115 @@
       0 0 0 3px var(--ink),
       0 4px 10px -2px rgba(0,0,0,0.3);
   }
-  .swatch::after {
-    content: attr(title);
+  /* clean pill tooltip — shared by swatches & shape buttons */
+  .swatch::after, .shape-btn::after {
+    content: attr(data-tip);
     position: absolute;
-    bottom: -18px;
+    bottom: calc(100% + 7px);
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(3px);
     font-family: 'Inter', sans-serif;
-    font-size: 9px;
-    color: var(--ink-soft);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: #f3ece1;
+    background: #2b2622;
+    padding: 4px 8px;
+    border-radius: 7px;
+    box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.12);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 120ms ease;
     white-space: nowrap;
+    transition: opacity 140ms ease, transform 140ms ease;
+    z-index: 30;
   }
-  .swatch:hover::after { opacity: 1; }
+  .swatch:hover::after, .shape-btn:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 
   /* shape selector (mirrors palette layout) */
   .shape-list {
     display: flex;
     gap: 6px;
+    flex-wrap: wrap;
   }
   .shape-btn {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
     border: none;
     cursor: pointer;
     padding: 0;
-    background: transparent;
+    background: rgba(58, 53, 47, 0.06);
     display: grid;
     place-items: center;
-    box-shadow: 0 0 0 0 var(--ink);
-    transition: transform 160ms cubic-bezier(.34,1.6,.64,1), box-shadow 160ms ease;
+    box-shadow: inset 0 0 0 1px rgba(58, 53, 47, 0.08);
+    transition: transform 160ms cubic-bezier(.34,1.6,.64,1),
+                box-shadow 160ms ease, background 160ms ease;
     position: relative;
   }
-  .shape-btn:hover { transform: scale(1.12); }
+  .shape-btn:hover {
+    transform: translateY(-1px) scale(1.06);
+    background: rgba(58, 53, 47, 0.13);
+    box-shadow: inset 0 0 0 1px rgba(58, 53, 47, 0.20),
+                0 3px 8px -3px rgba(0, 0, 0, 0.35);
+  }
+  /* the glyph itself brightens on hover for clear feedback */
+  .shape-btn:hover .shape-preview { background: #1f1b17; transform: scale(1.08); }
+  .shape-btn.diamond-btn:hover .shape-preview { transform: rotate(45deg) scale(1.08); }
   .shape-btn.active {
-    transform: scale(1.08);
+    transform: scale(1.04);
+    background: var(--card);
     box-shadow: 0 0 0 2px var(--card), 0 0 0 3px var(--ink);
   }
   .shape-preview {
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     background: var(--ink);
     display: block;
+    transition: background 160ms ease, transform 160ms ease;
   }
   .shape-preview.round { border-radius: 50%; }
   .shape-preview.square { border-radius: 2px; }
-  .shape-preview.diamond { transform: rotate(45deg); border-radius: 1px; width: 8px; height: 8px; }
-  .shape-btn::after {
-    content: attr(title);
-    position: absolute;
-    bottom: -18px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-family: 'Inter', sans-serif;
-    font-size: 9px;
-    color: var(--ink-soft);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 120ms ease;
-    white-space: nowrap;
-  }
-  .shape-btn:hover::after { opacity: 1; }
+  .shape-preview.diamond { transform: rotate(45deg); border-radius: 1px; width: 9px; height: 9px; }
+  .shape-preview.hexagon { clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%); }
 
-  /* download button */
+  /* download button — dark/black CTA */
   .download-btn {
-    padding: 9px 12px;
-    border-radius: 9px;
-    background: var(--ink);
-    color: var(--card);
+    width: 100%;
+    margin-top: 20px;
+    padding: 11px 12px;
+    border-radius: 11px;
+    background: linear-gradient(180deg, #2a2520 0%, #1a1714 60%, #100e0c 100%);
+    color: #f1e9dd;
     border: none;
     cursor: pointer;
     font-family: 'Inter', sans-serif;
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
     letter-spacing: -0.01em;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 140ms ease, transform 80ms ease, opacity 140ms ease;
+    gap: 7px;
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.07) inset,
+      0 8px 18px -8px rgba(0, 0, 0, 0.6),
+      0 3px 8px -4px rgba(0, 0, 0, 0.5);
+    transition: filter 140ms ease, transform 90ms ease, box-shadow 140ms ease;
     user-select: none;
   }
-  .download-btn:hover { background: #2b2622; }
-  .download-btn:active { transform: scale(0.985); }
-  .download-btn.recording {
-    background: #b94234;
-    cursor: default;
+  .download-btn svg { display: block; }
+  .download-btn:hover {
+    filter: brightness(1.22);
+    transform: translateY(-1px);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.09) inset,
+      0 12px 24px -8px rgba(0, 0, 0, 0.7),
+      0 4px 10px -4px rgba(0, 0, 0, 0.55);
   }
+  .download-btn:active { transform: translateY(0) scale(0.98); }
 
   @media (max-width: 720px) {
     body { flex-direction: column; }
@@ -350,8 +401,8 @@
 <aside class="panel">
   <div class="card">
     <div class="row text-row" data-key="text" data-type="text">
-      <span class="label">Word</span>
-      <span class="value" data-display>BORING</span>
+      <span class="label">Enter Text</span>
+      <span class="value" data-display>TYPE TEXT</span>
     </div>
 
     <div class="row scrubbable" data-key="dotRadius" data-type="number"
@@ -369,7 +420,7 @@
     <div class="row scrubbable" data-key="waveSpeed" data-type="number"
          data-min="-4" data-max="4" data-step="0.02" data-decimals="2">
       <span class="label">Speed</span>
-      <span class="value" data-display>0.30</span>
+      <span class="value" data-display>1.20</span>
     </div>
 
     <div class="row scrubbable" data-key="waveAngle" data-type="number"
@@ -387,42 +438,47 @@
     <div class="palette-bar">
       <span class="palette-bar-label">Palette</span>
       <div class="swatch-list">
-        <button class="swatch active" title="Amber"    data-palette='{"hueStart":25,"hueRange":35,"sat":75,"light":58}'></button>
-        <button class="swatch"        title="Citrus"   data-palette='{"hueStart":48,"hueRange":28,"sat":85,"light":62}'></button>
-        <button class="swatch"        title="Coral"    data-palette='{"hueStart":5,"hueRange":25,"sat":68,"light":70}'></button>
-        <button class="swatch"        title="Crimson"  data-palette='{"hueStart":350,"hueRange":22,"sat":72,"light":48}'></button>
-        <button class="swatch"        title="Berry"    data-palette='{"hueStart":315,"hueRange":30,"sat":75,"light":60}'></button>
-        <button class="swatch"        title="Lavender" data-palette='{"hueStart":255,"hueRange":40,"sat":50,"light":74}'></button>
-        <button class="swatch"        title="Ocean"    data-palette='{"hueStart":198,"hueRange":42,"sat":62,"light":54}'></button>
-        <button class="swatch"        title="Mint"     data-palette='{"hueStart":155,"hueRange":32,"sat":48,"light":70}'></button>
-        <button class="swatch"        title="Forest"   data-palette='{"hueStart":130,"hueRange":42,"sat":55,"light":44}'></button>
-        <button class="swatch"        title="Mono"     data-palette='{"hueStart":220,"hueRange":0,"sat":6,"light":75}'></button>
+        <button class="swatch active" data-tip="Amber"    aria-label="Amber palette"    data-palette='{"hueStart":25,"hueRange":35,"sat":75,"light":58}'></button>
+        <button class="swatch"        data-tip="Citrus"   aria-label="Citrus palette"   data-palette='{"hueStart":48,"hueRange":28,"sat":85,"light":62}'></button>
+        <button class="swatch"        data-tip="Coral"    aria-label="Coral palette"    data-palette='{"hueStart":5,"hueRange":25,"sat":68,"light":70}'></button>
+        <button class="swatch"        data-tip="Crimson"  aria-label="Crimson palette"  data-palette='{"hueStart":350,"hueRange":22,"sat":72,"light":48}'></button>
+        <button class="swatch"        data-tip="Berry"    aria-label="Berry palette"    data-palette='{"hueStart":315,"hueRange":30,"sat":75,"light":60}'></button>
+        <button class="swatch"        data-tip="Lavender" aria-label="Lavender palette" data-palette='{"hueStart":255,"hueRange":40,"sat":50,"light":74}'></button>
+        <button class="swatch"        data-tip="Ocean"    aria-label="Ocean palette"    data-palette='{"hueStart":198,"hueRange":42,"sat":62,"light":54}'></button>
+        <button class="swatch"        data-tip="Mint"     aria-label="Mint palette"     data-palette='{"hueStart":155,"hueRange":32,"sat":48,"light":70}'></button>
+        <button class="swatch"        data-tip="Forest"   aria-label="Forest palette"   data-palette='{"hueStart":130,"hueRange":42,"sat":55,"light":44}'></button>
+        <button class="swatch"        data-tip="Mono"     aria-label="Mono palette"     data-palette='{"hueStart":220,"hueRange":0,"sat":6,"light":75}'></button>
       </div>
     </div>
 
     <div class="palette-bar">
       <span class="palette-bar-label">Shape</span>
       <div class="shape-list">
-        <button class="shape-btn active" data-shape="round"   title="Rounded"><span class="shape-preview round"></span></button>
-        <button class="shape-btn"        data-shape="square"  title="Square"><span class="shape-preview square"></span></button>
-        <button class="shape-btn"        data-shape="diamond" title="Diamond"><span class="shape-preview diamond"></span></button>
+        <button class="shape-btn active" data-shape="round"    data-tip="Rounded" aria-label="Rounded dots"><span class="shape-preview round"></span></button>
+        <button class="shape-btn"        data-shape="square"   data-tip="Square"  aria-label="Square dots"><span class="shape-preview square"></span></button>
+        <button class="shape-btn diamond-btn" data-shape="diamond" data-tip="Diamond" aria-label="Diamond dots"><span class="shape-preview diamond"></span></button>
+        <button class="shape-btn"        data-shape="hexagon"  data-tip="Hexagon" aria-label="Hexagon dots"><span class="shape-preview hexagon"></span></button>
       </div>
     </div>
-  </div>
 
-  <button class="download-btn" id="download-btn" type="button">
-    <span class="btn-label">Download animation</span>
-  </button>
+    <button class="download-btn" id="download-btn" type="button">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v12m0 0l-5-5m5 5l5-5"/><path d="M4 19h16"/>
+      </svg>
+      <span class="btn-label">Download Animation</span>
+    </button>
+  </div>
 </aside>
 
 <script>
 (() => {
   // ----- CONFIG -----
+  const MAX_TEXT_LEN = 30;
   const config = {
     text: 'TYPE TEXT',
     dotRadius: 4.00,
     density: 9,
-    waveSpeed: 0.30,
+    waveSpeed: 1.20,
     waveAngle: 45,
     hueStart: 25,
     hueRange: 35,
@@ -437,12 +493,12 @@
   // ----- CANVAS -----
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
-  let dpr = Math.max(1, window.devicePixelRatio || 1);
+  let dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
 
   function resize() {
     const area = document.querySelector('.canvas-area');
     const r = area.getBoundingClientRect();
-    dpr = Math.max(1, window.devicePixelRatio || 1);
+    dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     canvas.width = Math.floor(r.width * dpr);
     canvas.height = Math.floor(r.height * dpr);
     canvas.style.width = r.width + 'px';
@@ -456,35 +512,38 @@
   const offscreen = document.createElement('canvas');
   const offctx = offscreen.getContext('2d');
 
+  const FONT_FAMILY = '"Archivo Black", "Inter Tight", system-ui, sans-serif';
+
   function samplePixels() {
     const text = (config.text || ' ').toUpperCase();
     const stageW = canvas.width / dpr;
     const stageH = canvas.height / dpr;
 
-    // pick font size that fits with ~14% margin
-    const maxTextW = stageW * 0.86;
-    const maxTextH = stageH * 0.55;
+    // ALWAYS one line — scale the font down so the whole word fits the width
+    // (and height); never wrap to a second line.
+    const maxTextW = stageW * 0.9;
+    const maxTextH = stageH * 0.62;
 
     let fs = config.fontSize;
-    offctx.font = `900 ${fs}px "Archivo Black", "Inter Tight", system-ui, sans-serif`;
-    let tw = offctx.measureText(text).width;
+    offctx.font = `900 ${fs}px ${FONT_FAMILY}`;
+    const tw = offctx.measureText(text).width;
     if (tw > maxTextW) fs = Math.floor(fs * maxTextW / tw);
     if (fs > maxTextH * 1.25) fs = Math.floor(maxTextH * 1.25);
-    fs = Math.max(40, fs);
+    fs = Math.max(12, fs);
 
-    const fontStr = `900 ${fs}px "Archivo Black", "Inter Tight", system-ui, sans-serif`;
+    const fontStr = `900 ${fs}px ${FONT_FAMILY}`;
     offctx.font = fontStr;
-    const metrics = offctx.measureText(text);
     const pad = Math.ceil(fs * 0.15);
-    const w = Math.ceil(metrics.width) + pad * 2;
+    const w = Math.ceil(offctx.measureText(text).width) + pad * 2;
     const h = Math.ceil(fs * 1.25) + pad * 2;
 
     offscreen.width = w;
     offscreen.height = h;
     offctx.font = fontStr;
     offctx.textBaseline = 'middle';
+    offctx.textAlign = 'center';
     offctx.fillStyle = '#fff';
-    offctx.fillText(text, pad, h / 2);
+    offctx.fillText(text, w / 2, h / 2);
 
     const data = offctx.getImageData(0, 0, w, h).data;
     const step = Math.max(3, Math.round(config.density));
@@ -643,9 +702,44 @@
   const PUSH_RATE = 0.32;
   const RETURN_RATE = 0.08;
 
+  // ----- SHAPE RENDERING -----
+  // Unit polygons (centred at origin), with a per-shape scale so each shape's
+  // visual mass roughly matches a circle of the same dot size.
+  function shapePoints(shape) {
+    switch (shape) {
+      case 'square':   { const h = 0.85; return [[-h,-h],[h,-h],[h,h],[-h,h]]; }
+      case 'diamond':  { const r = 1.20; return [[0,-r],[r,0],[0,r],[-r,0]]; }
+      case 'hexagon':  { const r = 1.12; const p = []; for (let i=0;i<6;i++){ const a = Math.PI/6 + i*Math.PI/3; p.push([Math.cos(a)*r, Math.sin(a)*r]); } return p; }
+      default: return null; // 'round'
+    }
+  }
+
+  // Build rounded-corner path segments for a shape at a given dot size.
+  // Corner radius scales with size but is clamped to 1–2px and is NEVER 0.
+  function buildShapeSegments(shape, sz) {
+    const unit = shapePoints(shape);
+    if (!unit) return null;
+    const pts = unit.map(p => [p[0]*sz, p[1]*sz]);
+    const r = Math.max(1, Math.min(2, sz * 0.28));
+    const n = pts.length;
+    const segs = [];
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i-1+n)%n], cur = pts[i], next = pts[(i+1)%n];
+      let dxp = prev[0]-cur[0], dyp = prev[1]-cur[1];
+      let dxn = next[0]-cur[0], dyn = next[1]-cur[1];
+      const lp = Math.hypot(dxp,dyp) || 1, ln = Math.hypot(dxn,dyn) || 1;
+      const rr = Math.min(r, lp/2, ln/2);
+      dxp/=lp; dyp/=lp; dxn/=ln; dyn/=ln;
+      segs.push([i===0 ? 0 : 1, cur[0]+dxp*rr, cur[1]+dyp*rr]);       // 0=moveTo 1=lineTo
+      segs.push([2, cur[0], cur[1], cur[0]+dxn*rr, cur[1]+dyn*rr]);   // 2=quadraticCurveTo
+    }
+    return segs;
+  }
+
   // ----- ANIMATION -----
   let t = 0;
   let last = performance.now();
+  const colorLut = new Array(64);
 
   function draw(now) {
     const dt = Math.min(48, now - last);
@@ -664,6 +758,18 @@
     const waveLen = 220;
     const ts = t * 0.001;
     const swarmT = ts * config.swarmSpeed;
+
+    // Per-frame colour LUT: the shimmer hue/lightness depend only on `norm`
+    // (0..1), so precompute N hsl strings once instead of building one string
+    // per dot per frame (CSS colour parsing per dot is the main draw cost).
+    const LUT_N = 64;
+    for (let k = 0; k < LUT_N; k++) {
+      const nm = k / (LUT_N - 1);
+      const hue = (config.hueStart + nm * config.hueRange) % 360;
+      const light = config.light + (nm - 0.5) * 18;
+      colorLut[k] = 'hsl(' + hue.toFixed(1) + ',' + config.sat + '%,' + light.toFixed(1) + '%)';
+    }
+    let lutFill = null; // skip redundant fillStyle assignments within a frame
 
     ctx.translate(w / 2, h / 2);
 
@@ -686,6 +792,9 @@
     }
 
     // --- draw pass (also runs cursor-dispersion physics per pixel)
+    // shape is identical for every dot this frame, so build its rounded path once
+    const sz = config.dotRadius;
+    const shapeSegs = config.shape === 'round' ? null : buildShapeSegments(config.shape, sz);
     const hasMouse = mouseX !== null;
     for (let i = 0; i < pixels.length; i++) {
       const p = pixels[i];
@@ -741,25 +850,18 @@
       const phase = proj + ts * config.waveSpeed * 0.5;
       // smooth sinusoidal hue position for a "shimmer" feel
       const norm = (Math.sin(phase * Math.PI) + 1) * 0.5;
-      const hue = (config.hueStart + norm * config.hueRange) % 360;
-      const light = config.light + (norm - 0.5) * 18;
-
-      ctx.fillStyle = `hsl(${hue}, ${config.sat}%, ${light}%)`;
+      const col = colorLut[(norm * (LUT_N - 1)) | 0];
+      if (col !== lutFill) { ctx.fillStyle = col; lutFill = col; }
       ctx.globalAlpha = p.alpha;
-      const sz = config.dotRadius;
-      if (config.shape === 'square') {
-        // scale square down so its visual mass matches a circle at the same dotRadius
-        // (square at full 2×size feels chunky and crowds the grid)
-        const half = sz * 0.85;
-        ctx.fillRect(px - half, py - half, half * 2, half * 2);
-      } else if (config.shape === 'diamond') {
-        // scale diamond up to match circle area (rotated square has less area at same half-diagonal)
-        const r = sz * 1.20;
+      if (shapeSegs) {
+        // rounded polygon (square, diamond, triangle, hexagon, star) — soft corners
         ctx.beginPath();
-        ctx.moveTo(px, py - r);
-        ctx.lineTo(px + r, py);
-        ctx.lineTo(px, py + r);
-        ctx.lineTo(px - r, py);
+        for (let s = 0; s < shapeSegs.length; s++) {
+          const g = shapeSegs[s];
+          if (g[0] === 0) ctx.moveTo(px + g[1], py + g[2]);
+          else if (g[0] === 1) ctx.lineTo(px + g[1], py + g[2]);
+          else ctx.quadraticCurveTo(px + g[1], py + g[2], px + g[3], py + g[4]);
+        }
         ctx.closePath();
         ctx.fill();
       } else {
@@ -840,7 +942,7 @@
         }
       } else {
         if (text.length > 0) {
-          const newVal = text.toUpperCase();
+          const newVal = text.toUpperCase().slice(0, MAX_TEXT_LEN);
           if (newVal !== config[key]) {
             config[key] = newVal;
             rebuildPixels(rebuildMorph);
@@ -866,8 +968,28 @@
         if (e.key.length === 1 && !allowed.test(e.key) && !ctrl.includes(e.key)) {
           e.preventDefault();
         }
+      } else {
+        // cap text length — block new chars at the limit (unless replacing a selection)
+        const sel = window.getSelection();
+        const hasSelection = sel && sel.toString().length > 0;
+        if (e.key.length === 1 && !e.metaKey && !e.ctrlKey &&
+            valueEl.textContent.length >= MAX_TEXT_LEN && !hasSelection) {
+          e.preventDefault();
+        }
       }
     });
+    // trim pasted/over-long content down to the cap
+    if (!isNumeric) {
+      valueEl.addEventListener('input', () => {
+        if (valueEl.textContent.length > MAX_TEXT_LEN) {
+          valueEl.textContent = valueEl.textContent.slice(0, MAX_TEXT_LEN);
+          // move caret to end after trimming
+          const r = document.createRange();
+          r.selectNodeContents(valueEl); r.collapse(false);
+          const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        }
+      });
+    }
   }
 
   function bindNumeric(row) {
@@ -970,57 +1092,207 @@
     });
   });
 
-  // download — export this HTML file with current config baked in
+  // download — export a MINIMAL standalone HTML containing ONLY this text +
+  // config as a self-running animation (no panel, no controls, nothing else)
+  function buildExportHTML(cfg) {
+    const cfgJSON = JSON.stringify(cfg);
+    const titleSafe = String(cfg.text || 'Pixelated Text')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Animation script uses string-concatenation (no template literals) so it
+    // nests safely inside this template literal; only the closing script tag
+    // is escaped (see end of the string).
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Bishrant Tandukar">
+<title>${titleSafe}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #1c1713; }
+  body { background:
+      radial-gradient(ellipse 60% 50% at 30% 50%, rgba(255,180,90,0.05), transparent 60%),
+      radial-gradient(ellipse 40% 60% at 80% 70%, rgba(255,100,50,0.04), transparent 60%),
+      #1c1713; }
+  canvas { position: fixed; inset: 0; z-index: 1; display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<script>
+(function(){
+  var config = ${cfgJSON};
+  var canvas = document.getElementById('stage');
+  var ctx = canvas.getContext('2d');
+  var dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  var pixels = [];
+  var offscreen = document.createElement('canvas');
+  var offctx = offscreen.getContext('2d');
+  function resize(){
+    dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    rebuildPixels();
+  }
+  var FONT_FAMILY = '"Archivo Black", system-ui, sans-serif';
+  function samplePixels(){
+    var text = (config.text || ' ').toUpperCase();
+    var stageW = canvas.width / dpr, stageH = canvas.height / dpr;
+    // ALWAYS one line — scale to fit width/height, never wrap
+    var maxTextW = stageW * 0.9, maxTextH = stageH * 0.62;
+    var fs = config.fontSize;
+    offctx.font = '900 ' + fs + 'px ' + FONT_FAMILY;
+    var tw = offctx.measureText(text).width;
+    if (tw > maxTextW) fs = Math.floor(fs * maxTextW / tw);
+    if (fs > maxTextH * 1.25) fs = Math.floor(maxTextH * 1.25);
+    fs = Math.max(12, fs);
+    var fontStr = '900 ' + fs + 'px ' + FONT_FAMILY;
+    offctx.font = fontStr;
+    var pad = Math.ceil(fs * 0.15);
+    var w = Math.ceil(offctx.measureText(text).width) + pad*2;
+    var h = Math.ceil(fs * 1.25) + pad*2;
+    offscreen.width = w; offscreen.height = h;
+    offctx.font = fontStr; offctx.textBaseline = 'middle'; offctx.textAlign = 'center'; offctx.fillStyle = '#fff';
+    offctx.fillText(text, w/2, h/2);
+    var data = offctx.getImageData(0,0,w,h).data;
+    var step = Math.max(3, Math.round(config.density));
+    var targets = [];
+    for (var y=0; y<h; y+=step){
+      for (var x=0; x<w; x+=step){
+        var a=0;
+        for (var dy=0;dy<2;dy++) for (var dx=0;dx<2;dx++){
+          var sx=Math.min(w-1,x+dx), sy=Math.min(h-1,y+dy);
+          a += data[(sy*w+sx)*4+3];
+        }
+        a/=4;
+        if (a>100) targets.push({ x:x-w/2, y:y-h/2, alpha:Math.min(1,a/200) });
+      }
+    }
+    return targets;
+  }
+  function rebuildPixels(){
+    pixels = samplePixels().map(function(t){
+      return { x:t.x, y:t.y, alpha:t.alpha, seed:Math.random()*1000, dx:0, dy:0, pushDX:0, pushDY:0 };
+    });
+  }
+  function shapePoints(shape){
+    switch (shape) {
+      case 'square':   { var h=0.85; return [[-h,-h],[h,-h],[h,h],[-h,h]]; }
+      case 'diamond':  { var r=1.20; return [[0,-r],[r,0],[0,r],[-r,0]]; }
+      case 'hexagon':  { var r=1.12,p=[]; for(var i=0;i<6;i++){var a=Math.PI/6+i*Math.PI/3; p.push([Math.cos(a)*r,Math.sin(a)*r]);} return p; }
+      default: return null;
+    }
+  }
+  function buildShapeSegments(shape, sz){
+    var unit = shapePoints(shape);
+    if (!unit) return null;
+    var pts = unit.map(function(p){ return [p[0]*sz, p[1]*sz]; });
+    var r = Math.max(1, Math.min(2, sz * 0.28));
+    var n = pts.length, segs = [];
+    for (var i=0;i<n;i++){
+      var prev=pts[(i-1+n)%n], cur=pts[i], next=pts[(i+1)%n];
+      var dxp=prev[0]-cur[0], dyp=prev[1]-cur[1];
+      var dxn=next[0]-cur[0], dyn=next[1]-cur[1];
+      var lp=Math.hypot(dxp,dyp)||1, ln=Math.hypot(dxn,dyn)||1;
+      var rr=Math.min(r, lp/2, ln/2);
+      dxp/=lp; dyp/=lp; dxn/=ln; dyn/=ln;
+      segs.push([i===0?0:1, cur[0]+dxp*rr, cur[1]+dyp*rr]);
+      segs.push([2, cur[0], cur[1], cur[0]+dxn*rr, cur[1]+dyn*rr]);
+    }
+    return segs;
+  }
+  var mouseX=null, mouseY=null;
+  function setCursor(cx,cy){ var rect=canvas.getBoundingClientRect(); mouseX=cx-rect.left-rect.width/2; mouseY=cy-rect.top-rect.height/2; }
+  function clearCursor(){ mouseX=null; mouseY=null; }
+  canvas.addEventListener('mousemove', function(e){ setCursor(e.clientX,e.clientY); });
+  canvas.addEventListener('mouseleave', clearCursor);
+  canvas.addEventListener('touchmove', function(e){ if(e.touches.length>0) setCursor(e.touches[0].clientX,e.touches[0].clientY); }, {passive:true});
+  canvas.addEventListener('touchend', clearCursor);
+  canvas.addEventListener('touchcancel', clearCursor);
+  var REPEL_R=24, REPEL_R2=REPEL_R*REPEL_R, MAX_PUSH=26, PUSH_RATE=0.32, RETURN_RATE=0.08;
+  var t=0, last=performance.now();
+  var colorLut=new Array(64);
+  function draw(now){
+    var dt=Math.min(48, now-last); last=now; t+=dt;
+    var w=canvas.width/dpr, h=canvas.height/dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,w,h);
+    var angleRad=config.waveAngle*Math.PI/180, cs=Math.cos(angleRad), sn=Math.sin(angleRad);
+    var waveLen=220, ts=t*0.001, swarmT=ts*config.swarmSpeed;
+    var LUT_N=64;
+    for (var lk=0; lk<LUT_N; lk++){ var nm=lk/(LUT_N-1); var lh=(config.hueStart+nm*config.hueRange)%360; var ll=config.light+(nm-0.5)*18; colorLut[lk]='hsl('+lh.toFixed(1)+','+config.sat+'%,'+ll.toFixed(1)+'%)'; }
+    var lutFill=null;
+    ctx.translate(w/2,h/2);
+    var sz=config.dotRadius;
+    var shapeSegs = config.shape==='round' ? null : buildShapeSegments(config.shape, sz);
+    var hasMouse = mouseX!==null;
+    for (var i=0;i<pixels.length;i++){
+      var p=pixels[i], influence=0;
+      if (hasMouse){
+        var ex=p.x-mouseX, ey=p.y-mouseY, d2=ex*ex+ey*ey;
+        if (d2<REPEL_R2 && d2>0.01){
+          var d=Math.sqrt(d2), u=1-d/REPEL_R;
+          influence=u*u*(3-2*u);
+          if (p.pushDX===0 && p.pushDY===0){ p.pushDX=ex/d; p.pushDY=ey/d; }
+        }
+      }
+      var tdx=p.pushDX*influence*MAX_PUSH, tdy=p.pushDY*influence*MAX_PUSH;
+      var rate = influence>0 ? PUSH_RATE : RETURN_RATE;
+      p.dx += (tdx-p.dx)*rate; p.dy += (tdy-p.dy)*rate;
+      if (influence===0 && Math.abs(p.dx)<0.3 && Math.abs(p.dy)<0.3){ p.pushDX=0; p.pushDY=0; }
+      var s=p.seed;
+      var ox=(Math.sin(s+swarmT*2.0)+Math.sin(s*1.7+swarmT*1.3)*0.6)*config.swarm;
+      var oy=(Math.cos(s*1.1+swarmT*1.8)+Math.cos(s*0.6+swarmT*2.4)*0.5)*config.swarm;
+      var px=p.x+ox+p.dx, py=p.y+oy+p.dy;
+      var proj=(px*cs+py*sn)/waveLen;
+      var phase=proj+ts*config.waveSpeed*0.5;
+      var norm=(Math.sin(phase*Math.PI)+1)*0.5;
+      var col=colorLut[(norm*(LUT_N-1))|0];
+      if (col!==lutFill){ ctx.fillStyle=col; lutFill=col; }
+      ctx.globalAlpha=p.alpha;
+      if (shapeSegs){
+        ctx.beginPath();
+        for (var sg=0; sg<shapeSegs.length; sg++){
+          var g=shapeSegs[sg];
+          if (g[0]===0) ctx.moveTo(px+g[1],py+g[2]);
+          else if (g[0]===1) ctx.lineTo(px+g[1],py+g[2]);
+          else ctx.quadraticCurveTo(px+g[1],py+g[2],px+g[3],py+g[4]);
+        }
+        ctx.closePath(); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.arc(px,py,sz,0,Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.setTransform(1,0,0,1,0,0);
+    requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize', resize);
+  if (document.fonts && document.fonts.ready){
+    document.fonts.ready.then(function(){ resize(); requestAnimationFrame(draw); });
+  } else { resize(); requestAnimationFrame(draw); }
+})();
+<\/script>
+</body>
+</html>`;
+  }
+
   (() => {
     const btn = document.getElementById('download-btn');
+    if (!btn) return;
     const label = btn.querySelector('.btn-label');
 
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       if (btn.dataset.busy) return;
       btn.dataset.busy = '1';
       label.textContent = 'Preparing…';
-
       try {
-        // Fetch the page source (works on local server and GitHub Pages)
-        const res = await fetch(location.href);
-        let html = await res.text();
-
-        // Replace the entire config block with current live values
-        const safeText = config.text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        const newConfig = `  const config = {
-    text: '${safeText}',
-    dotRadius: ${config.dotRadius},
-    density: ${config.density},
-    waveSpeed: ${config.waveSpeed},
-    waveAngle: ${config.waveAngle},
-    hueStart: ${config.hueStart},
-    hueRange: ${config.hueRange},
-    sat: ${config.sat},
-    light: ${config.light},
-    swarm: ${config.swarm},
-    swarmSpeed: ${config.swarmSpeed},
-    shape: '${config.shape}',
-    fontSize: ${config.fontSize},
-  };`;
-
-        html = html.replace(/  const config = \{[\s\S]*?\};/, newConfig);
-
-        // Also mark the matching swatch as active so palette looks correct on open
-        // (strip all active attrs then re-apply to the matching one)
-        html = html.replace(/class="swatch active"/g, 'class="swatch"');
-        const matchSwatch = `"hueStart":${config.hueStart},"hueRange":${config.hueRange},"sat":${config.sat},"light":${config.light}`;
-        html = html.replace(
-          new RegExp(`(class="swatch"[^>]*data-palette='[^']*${config.hueStart}[^']*')`),
-          (m) => m.replace('class="swatch"', 'class="swatch active"')
-        );
-
-        // Mark correct shape button active
-        html = html.replace(/class="shape-btn active"/g, 'class="shape-btn"');
-        html = html.replace(
-          new RegExp(`(class="shape-btn"[^>]*data-shape="${config.shape}")`),
-          (m) => m.replace('class="shape-btn"', 'class="shape-btn active"')
-        );
-
+        const html = buildExportHTML(config);
         const safeName = (config.text || 'text').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'text';
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
@@ -1031,14 +1303,12 @@
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
-
         label.textContent = 'Downloaded!';
-        setTimeout(() => { label.textContent = 'Download animation'; }, 1500);
+        setTimeout(() => { label.textContent = 'Download Animation'; }, 1500);
       } catch (err) {
         label.textContent = 'Failed – try again';
-        setTimeout(() => { label.textContent = 'Download animation'; }, 2000);
+        setTimeout(() => { label.textContent = 'Download Animation'; }, 2000);
       }
-
       delete btn.dataset.busy;
     });
   })();
