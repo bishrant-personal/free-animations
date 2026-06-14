@@ -1,0 +1,26 @@
+{
+  "updated": "2026-06-14",
+  "animations": [
+    {
+      "file": "pixel-sunset.html",
+      "title": "Pixel Sunset Beach",
+      "category": "Scenes",
+      "tags": ["pixel", "beach", "sunset", "ocean", "waves", "day-night", "canvas", "animation", "nature", "clouds"],
+      "description": "Animated pixel art beach scene with rolling waves, drifting clouds, birds, crabs, jellyfish, and bioluminescent ocean. Includes a day/night toggle that smoothly transitions the full scene."
+    },
+    {
+      "file": "pixelated-text-generator.html",
+      "title": "Pixelated Text Generator",
+      "category": "Tools",
+      "tags": ["pixel", "text", "shimmer", "wave", "interactive", "dots", "animation", "cursor", "typography", "color", "tool"],
+      "description": "Interactive text animation that renders any word as a swarm of colored dots flowing with a wave shimmer effect. Customize dot size, spacing, speed, direction, color palette, and shape in real time. Hover to scatter dots with your cursor."
+    },
+    {
+      "file": "bubble-clock.html",
+      "title": "Bubble Clock",
+      "category": "Scenes",
+      "tags": ["bubble", "clock", "three.js", "webgl", "glass", "iridescence", "refraction", "physics", "collision", "interactive", "pop", "time", "shader"],
+      "description": "A real-time analog clock suspended inside a liquid glass soap bubble, rendered in Three.js. The bubble drifts and bounces around the viewport with jelly physics, colliding with a crowd of smaller glass bubbles. Features thin-film iridescence, dynamic reflection and refraction, frosted blur, and tap-to-pop bursts."
+    }
+  ]
+}
